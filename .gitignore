@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env.local
+.env
+*.env
+.DS_Store
+.claude/
+*.log
+npm-debug.log*
