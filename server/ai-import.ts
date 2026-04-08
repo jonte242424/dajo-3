@@ -14,7 +14,16 @@ import { extractIReal } from "./import/extract-ireal.js";
 import { extractSongbook } from "./import/extract-songbook.js";
 import { extractNotation } from "./import/extract-notation.js";
 
-export type MediaType = "application/pdf" | "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+export type MediaType =
+  | "application/pdf"
+  | "image/jpeg"
+  | "image/png"
+  | "image/gif"
+  | "image/webp"
+  | "audio/mpeg"
+  | "audio/wav"
+  | "audio/ogg"
+  | "audio/mp4";
 
 export interface ImportedSong {
   title: string;
@@ -54,6 +63,49 @@ export function normalizeMusicFonts(text: string): string {
     .replace(/♯/g, "#");
 }
 
+// ─── Audio file handler (placeholder for MVP) ─────────────────────────────────
+
+async function analyzeAudioFile(filename: string): Promise<AnalyzeResult> {
+  // For MVP, audio analysis is limited:
+  // - Extract title from filename
+  // - Ask user for chord input via UI
+  // - Basic structure guessing
+
+  const title = filename
+    .replace(/\.(mp3|wav|ogg|m4a)$/i, "")
+    .replace(/[_-]/g, " ")
+    .trim();
+
+  // Return a basic structure for audio files
+  // User will need to manually input the chords
+  const emptySong: ImportedSong = {
+    title: title || "Okänd låt",
+    artist: "",
+    key: "C",
+    tempo: 120,
+    timeSignature: "4/4",
+    style: "",
+    preferredFormat: "songbook",
+    sections: [
+      {
+        id: crypto.randomUUID(),
+        name: "Vers",
+        type: "bars",
+        bars: Array.from({ length: 8 }, () => ({ chords: [], lyrics: "" })),
+      },
+    ],
+  };
+
+  return {
+    songs: [emptySong],
+    tokensUsed: 0,
+    model: "manual-audio (requires chord input)",
+    detectedFormat: "songbook",
+    detectionConfidence: 0,
+    detectionSignals: ["audio-file: manual-input-required"],
+  };
+}
+
 // ─── Huvud-analysfunktion ─────────────────────────────────────────────────────
 
 export async function analyzeFile(
@@ -64,6 +116,12 @@ export async function analyzeFile(
 ): Promise<AnalyzeResult> {
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error("ANTHROPIC_API_KEY saknas — lägg till den i miljövariablerna");
+  }
+
+  // Handle audio files separately
+  if (mediaType.startsWith("audio/")) {
+    console.log(`[Import] Audioformat: ${mediaType} — ${filename}`);
+    return analyzeAudioFile(filename);
   }
 
   const normalizedText = extractedText ? normalizeMusicFonts(extractedText) : "";

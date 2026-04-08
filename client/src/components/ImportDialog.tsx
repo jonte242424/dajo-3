@@ -10,7 +10,7 @@ import { useLocation } from "wouter";
 import {
   Upload, X, FileText, Image, Loader2,
   CheckCircle2, AlertCircle, Music, ChevronRight,
-  Grid3x3, BookOpen, Music2,
+  Grid3x3, BookOpen, Music2, Volume2,
 } from "lucide-react";
 import { apiFetch } from "../lib/api";
 
@@ -38,8 +38,12 @@ interface Props {
   onClose: () => void;
 }
 
-const ACCEPTED = ["application/pdf", "image/jpeg", "image/png", "image/webp", "image/gif"];
-const ACCEPTED_EXT = ".pdf,.jpg,.jpeg,.png,.webp,.gif";
+const ACCEPTED = [
+  "application/pdf",
+  "image/jpeg", "image/png", "image/webp", "image/gif",
+  "audio/mpeg", "audio/wav", "audio/ogg", "audio/mp4",
+];
+const ACCEPTED_EXT = ".pdf,.jpg,.jpeg,.png,.webp,.gif,.mp3,.wav,.ogg,.m4a";
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -55,9 +59,9 @@ function fileToBase64(file: File): Promise<string> {
 }
 
 function FileIcon({ type }: { type: string }) {
-  return type === "application/pdf"
-    ? <FileText size={20} className="text-red-400" />
-    : <Image size={20} className="text-blue-400" />;
+  if (type === "application/pdf") return <FileText size={20} className="text-red-400" />;
+  if (type.startsWith("audio/")) return <Volume2 size={20} className="text-green-400" />;
+  return <Image size={20} className="text-blue-400" />;
 }
 
 export default function ImportDialog({ onClose }: Props) {
@@ -213,9 +217,9 @@ export default function ImportDialog({ onClose }: Props) {
               >
                 <Upload size={32} className={`mx-auto mb-3 transition-colors ${dragOver ? "text-indigo-500" : "text-gray-300"}`} />
                 <p className="font-medium text-gray-700 mb-1">Dra hit eller klicka för att välja fil</p>
-                <p className="text-sm text-gray-400">PDF, PNG, JPEG, WebP — upp till 30MB</p>
+                <p className="text-sm text-gray-400">PDF, PNG, JPEG, WebP, MP3, WAV — upp till 30MB</p>
                 <p className="text-xs text-indigo-400 mt-3">
-                  Claude AI analyserar noter, ackordscheman och kompskisser
+                  Claude AI analyserar noter, ackordscheman, inspelningar och kompskisser
                 </p>
                 <input
                   ref={fileRef}

@@ -660,7 +660,9 @@ app.post("/api/import/analyze", requireAuth, async (req: any, res) => {
   }
 
   const allowed: MediaType[] = [
-    "application/pdf", "image/jpeg", "image/png", "image/gif", "image/webp",
+    "application/pdf",
+    "image/jpeg", "image/png", "image/gif", "image/webp",
+    "audio/mpeg", "audio/wav", "audio/ogg", "audio/mp4",
   ];
   if (!allowed.includes(mediaType)) {
     return res.status(400).json({ error: `Filtypen stöds inte: ${mediaType}` });
