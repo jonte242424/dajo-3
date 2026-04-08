@@ -57,16 +57,17 @@ export async function classifyFormat(
     throw new Error("ANTHROPIC_API_KEY saknas");
   }
 
-  const content: Anthropic.MessageParam["content"] = [
-    {
-      type: "image",
-      source: {
-        type: "base64",
-        media_type: mediaType === "application/pdf" ? "image/jpeg" : mediaType,
-        data: base64Data,
-      },
-    } as any,
-  ];
+  const fileBlock: any = mediaType === "application/pdf"
+    ? {
+        type: "document",
+        source: { type: "base64", media_type: "application/pdf", data: base64Data },
+      }
+    : {
+        type: "image",
+        source: { type: "base64", media_type: mediaType, data: base64Data },
+      };
+
+  const content: Anthropic.MessageParam["content"] = [fileBlock];
 
   // Om vi har extraherad text — ge den som extra kontext
   if (extractedText && extractedText.trim().length > 10) {

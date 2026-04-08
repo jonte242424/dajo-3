@@ -131,14 +131,15 @@ export async function extractNotation(
       {
         role: "user",
         content: [
-          {
-            type: "document" as any,
-            source: {
-              type: "base64",
-              media_type: mediaType,
-              data: base64Data,
-            },
-          } as any,
+          mediaType === "application/pdf"
+            ? {
+                type: "document" as any,
+                source: { type: "base64", media_type: mediaType, data: base64Data },
+              } as any
+            : {
+                type: "image",
+                source: { type: "base64", media_type: mediaType, data: base64Data },
+              } as any,
           {
             type: "text",
             text: NOTATION_USER_PROMPT(filename, extractedText),
