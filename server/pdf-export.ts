@@ -1,8 +1,14 @@
 /**
- * DAJO 3.0 — PDF Export
- * Tre stilar: ireal (ackordschema-grid), songbook (text+ackord), notation (staff-look)
+ * DAJO 3.0 — PDF Export (Improved)
+ * Tre stilar: ireal (ackordschema-grid), songbook (ChordPro-standard), notation (leadsheet)
+ *
+ * Standards:
+ * - iReal Pro: https://www.irealpro.com/ireal-pro-custom-chord-chart-protocol
+ * - ChordPro: https://www.chordpro.org/chordpro/
+ * - Leadsheet: Staff-based notation with chord symbols
  */
 
+// @ts-ignore - pdfkit is CommonJS but we're in ESM
 import PDFDocument from "pdfkit";
 import type { Section, Bar, ChordEntry } from "../shared/types.js";
 
@@ -21,38 +27,41 @@ export interface SongForExport {
   sections: Section[];
 }
 
-// ─── Colors & fonts ───────────────────────────────────────────────────────────
+// ─── Colors ───────────────────────────────────────────────────────────────────
 
 const C = {
-  black:     "#111111",
+  black:     "#000000",
   darkGray:  "#333333",
   midGray:   "#666666",
-  lightGray: "#AAAAAA",
+  lightGray: "#999999",
   border:    "#CCCCCC",
-  barBg:     "#FAFAFA",
-  sectionBg: "#1A2A4A",
+  divider:   "#DDDDDD",
+  barBg:     "#FFFFFF",
+  sectionBg: "#1F3A66",
   sectionFg: "#FFFFFF",
   accent:    "#2563EB",
-  staffLine: "#888888",
+  staffLine: "#444444",
 };
 
 const PAGE = { w: 595.28, h: 841.89 }; // A4
 const MARGIN = 40;
 const INNER_W = PAGE.w - MARGIN * 2;
 
-// ─── Helper: chord symbols list from a bar ────────────────────────────────────
+// ─── Helper: split chord symbol into root + quality ──────────────────────────
+// "Cmaj7" → { root: "C", quality: "maj7" }
+// "F#m7b5" → { root: "F#", quality: "m7b5" }
+
+function splitChord(symbol: string): { root: string; quality: string } {
+  if (!symbol || symbol === "%") return { root: symbol, quality: "" };
+  let i = 0;
+  let root = symbol[i++]; // First char is always root
+  if (i < symbol.length && (symbol[i] === "#" || symbol[i] === "b")) root += symbol[i++];
+  return { root, quality: symbol.slice(i) };
+}
 
 function barChords(bar: Bar): ChordEntry[] {
   return bar.chords ?? [];
 }
-
-function chordsText(bar: Bar): string {
-  const ch = barChords(bar);
-  if (ch.length === 0) return "%"; // % = repeat
-  return ch.map((c) => c.symbol).join("  ");
-}
-
-// ─── Helper: split sections into bars-only groups ────────────────────────────
 
 function barsOf(section: Section): Bar[] {
   if (section.type !== "bars") return [];
@@ -98,133 +107,145 @@ export function generatePdf(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// STIL 1: iReal Grid
+// STIL 1: iReal Grid (iReal Pro format inspired)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function renderIreal(doc: PDFKit.PDFDocument, song: SongForExport) {
   let y = MARGIN;
 
   // ── Header ──────────────────────────────────────────────────────────────────
-  doc.fontSize(22).fillColor(C.black).font("Helvetica-Bold")
+  doc.fontSize(28).fillColor(C.black).font("Helvetica-Bold")
      .text(song.title, MARGIN, y, { width: INNER_W, align: "center" });
-  y += 30;
+  y += 36;
 
   if (song.artist) {
-    doc.fontSize(13).fillColor(C.midGray).font("Helvetica")
+    doc.fontSize(12).fillColor(C.midGray).font("Helvetica")
        .text(song.artist, MARGIN, y, { width: INNER_W, align: "center" });
-    y += 20;
+    y += 18;
   }
 
-  // ── Meta bar ────────────────────────────────────────────────────────────────
+  // ── Meta line ────────────────────────────────────────────────────────────────
   const metaParts: string[] = [];
-  if (song.key)           metaParts.push(`Tonart: ${song.key}`);
-  if (song.tempo)         metaParts.push(`♩ = ${song.tempo}`);
+  if (song.key) metaParts.push(`Tonart: ${song.key}`);
+  if (song.tempo) metaParts.push(`♩ = ${song.tempo}`);
   if (song.timeSignature) metaParts.push(song.timeSignature);
-  if (song.style)         metaParts.push(song.style);
+  if (song.style) metaParts.push(song.style);
 
   if (metaParts.length) {
     y += 4;
     doc.fontSize(10).fillColor(C.midGray).font("Helvetica")
        .text(metaParts.join("   •   "), MARGIN, y, { width: INNER_W, align: "center" });
-    y += 16;
+    y += 14;
   }
 
-  // ── Divider ─────────────────────────────────────────────────────────────────
+  // ── Divider ──────────────────────────────────────────────────────────────────
   doc.moveTo(MARGIN, y).lineTo(MARGIN + INNER_W, y)
-     .strokeColor(C.border).lineWidth(1).stroke();
+     .strokeColor(C.divider).lineWidth(1).stroke();
   y += 12;
 
-  // ── Bars per row & bar dimensions ───────────────────────────────────────────
+  // ── Bar grid settings ────────────────────────────────────────────────────────
   const COLS = 4;
-  const BAR_W = (INNER_W - (COLS - 1) * 6) / COLS;
-  const BAR_H = 52;
-  const BAR_GAP_X = 6;
-  const BAR_GAP_Y = 6;
+  const BAR_W = INNER_W / COLS;
+  const BAR_H = 60;
+  const ROW_GAP = 8;
 
+  // ── Render sections ──────────────────────────────────────────────────────────
   for (const section of song.sections) {
     if (section.type === "note") {
-      // Render note section
       y = ensureSpace(doc, y, 30);
       doc.fontSize(9).fillColor(C.midGray).font("Helvetica-Oblique")
          .text(section.noteText ?? "", MARGIN, y, { width: INNER_W });
-      y += doc.currentLineHeight() + 8;
+      y += 20;
       continue;
     }
 
     const bars = barsOf(section);
     if (!bars.length) continue;
 
-    y = ensureSpace(doc, y, 24 + BAR_H);
+    y = ensureSpace(doc, y, 28 + BAR_H);
 
-    // Section label pill
-    const labelW = Math.min(doc.widthOfString(section.name ?? "A", { fontSize: 11 }) + 20, 120);
-    doc.roundedRect(MARGIN, y, labelW, 18, 3)
-       .fill(C.sectionBg);
-    doc.fontSize(11).fillColor(C.sectionFg).font("Helvetica-Bold")
-       .text(section.name ?? "", MARGIN, y + 3, { width: labelW, align: "center" });
-    y += 24;
+    // ── Section label (dark pill) ─────────────────────────────────────
+    const labelW = Math.min(
+      doc.widthOfString(section.name ?? "A", { fontSize: 10 }) + 16,
+      120
+    );
+    doc.roundedRect(MARGIN, y, labelW, 20, 4).fill(C.sectionBg);
+    doc.fontSize(10).fillColor(C.sectionFg).font("Helvetica-Bold")
+       .text(section.name ?? "", MARGIN, y + 4, { width: labelW, align: "center" });
+    y += 26;
 
-    // Bar grid
-    let col = 0;
-    for (let i = 0; i < bars.length; i++) {
-      const bar = bars[i];
-      const x = MARGIN + col * (BAR_W + BAR_GAP_X);
+    // ── Render bar rows ──────────────────────────────────────────────────
+    let rowStart = 0;
+    while (rowStart < bars.length) {
+      const rowEnd = Math.min(rowStart + COLS, bars.length);
+      const rowBars = bars.slice(rowStart, rowEnd);
 
-      y = col === 0 && i > 0 ? ensureSpace(doc, y, BAR_H + BAR_GAP_Y) : y;
+      y = ensureSpace(doc, y, BAR_H + ROW_GAP);
 
-      // Bar background + border
-      doc.roundedRect(x, y, BAR_W, BAR_H, 4)
-         .fill(C.barBg)
-         .roundedRect(x, y, BAR_W, BAR_H, 4)
-         .strokeColor(C.border).lineWidth(0.75).stroke();
+      for (let col = 0; col < rowBars.length; col++) {
+        const bar = rowBars[col];
+        const bx = MARGIN + col * BAR_W;
 
-      // Chords
-      const ch = barChords(bar);
-      if (ch.length === 0) {
-        // Repeat sign %
-        doc.fontSize(18).fillColor(C.lightGray).font("Helvetica")
-           .text("%", x, y + BAR_H / 2 - 10, { width: BAR_W, align: "center" });
-      } else if (ch.length === 1) {
-        doc.fontSize(16).fillColor(C.black).font("Helvetica-Bold")
-           .text(ch[0].symbol, x + 6, y + BAR_H / 2 - 10, { width: BAR_W - 12, align: "center" });
-      } else {
-        // Two chords split at half
-        const half = BAR_W / 2;
-        doc.fontSize(13).fillColor(C.black).font("Helvetica-Bold");
-        doc.text(ch[0].symbol, x + 4, y + BAR_H / 2 - 9, { width: half - 6, align: "center" });
-        doc.text(ch[1].symbol, x + half + 2, y + BAR_H / 2 - 9, { width: half - 6, align: "center" });
-        // Divider
-        doc.moveTo(x + half, y + 8).lineTo(x + half, y + BAR_H - 8)
-           .strokeColor(C.border).lineWidth(0.5).stroke();
+        // ── Bar border ────────────────────────────────────────────────
+        doc.rect(bx, y, BAR_W, BAR_H)
+           .strokeColor(C.border).lineWidth(0.75).stroke();
+
+        // ── Chord rendering ───────────────────────────────────────────
+        const ch = barChords(bar);
+        if (ch.length === 0) {
+          // Repeat sign %
+          doc.fontSize(28).fillColor(C.lightGray).font("Helvetica")
+             .text("%", bx, y + BAR_H / 2 - 16, { width: BAR_W, align: "center" });
+        } else if (ch.length === 1) {
+          // Single chord - split into root (large) + quality (superscript)
+          renderChordSplit(doc, ch[0].symbol, bx + BAR_W / 2, y + BAR_H / 2 - 8);
+        } else if (ch.length === 2) {
+          // Two chords with slash
+          renderChordSplit(doc, ch[0].symbol, bx + BAR_W * 0.25, y + BAR_H / 2 - 8);
+          doc.fontSize(16).fillColor(C.darkGray).font("Helvetica")
+             .text("/", bx + BAR_W / 2 - 6, y + BAR_H / 2 - 10);
+          renderChordSplit(doc, ch[1].symbol, bx + BAR_W * 0.75, y + BAR_H / 2 - 8);
+        } else {
+          // Many chords - try to fit
+          const parts = ch.slice(0, 3);
+          parts.forEach((c, i) => {
+            const tx = bx + 4 + (i * (BAR_W - 8)) / parts.length;
+            doc.fontSize(11).fillColor(C.black).font("Helvetica-Bold")
+               .text(c.symbol, tx, y + 8, { width: BAR_W / parts.length - 4, align: "center", lineBreak: false });
+          });
+        }
+
+        // ── Bar number (small, top-left) ──────────────────────────────
+        const barNum = rowStart + col + 1;
+        doc.fontSize(7).fillColor(C.lightGray).font("Helvetica")
+           .text(String(barNum), bx + 3, y + 3);
+
+        // ── Lyrics (bottom, small) ────────────────────────────────────
+        if (bar.lyrics) {
+          doc.fontSize(7).fillColor(C.midGray).font("Helvetica-Oblique")
+             .text(bar.lyrics, bx + 3, y + BAR_H - 11, { width: BAR_W - 6, ellipsis: true });
+        }
+
+        // ── Navigation marker (bottom-right, small) ──────────────────
+        if (bar.navigation) {
+          doc.fontSize(6).fillColor(C.accent).font("Helvetica-Oblique")
+             .text(bar.navigation, bx + 2, y + BAR_H - 8, { width: BAR_W - 4, align: "right", lineBreak: false });
+        }
       }
 
-      // Bar number (small)
-      doc.fontSize(7).fillColor(C.lightGray).font("Helvetica")
-         .text(String(i + 1), x + 3, y + 3, { width: 20 });
-
-      // Lyrics
-      if (bar.lyrics) {
-        doc.fontSize(7).fillColor(C.midGray).font("Helvetica-Oblique")
-           .text(bar.lyrics, x + 4, y + BAR_H - 12, { width: BAR_W - 8, ellipsis: true });
-      }
-
-      col++;
-      if (col >= COLS) {
-        col = 0;
-        y += BAR_H + BAR_GAP_Y;
-      }
+      y += BAR_H + ROW_GAP;
+      rowStart = rowEnd;
     }
 
-    if (col > 0) y += BAR_H + BAR_GAP_Y;
-    y += 10;
+    y += 4;
   }
 
-  // Notes
+  // ── Notes section ────────────────────────────────────────────────────────────
   if (song.notes) {
     y = ensureSpace(doc, y, 40);
     y += 8;
     doc.moveTo(MARGIN, y).lineTo(MARGIN + INNER_W, y)
-       .strokeColor(C.border).lineWidth(0.5).stroke();
+       .strokeColor(C.divider).lineWidth(0.5).stroke();
     y += 8;
     doc.fontSize(9).fillColor(C.midGray).font("Helvetica-Oblique")
        .text(`Not: ${song.notes}`, MARGIN, y, { width: INNER_W });
@@ -233,8 +254,30 @@ function renderIreal(doc: PDFKit.PDFDocument, song: SongForExport) {
   footer(doc, "iReal Grid");
 }
 
+// ─── Helper: render chord with split typography (root large, quality small) ───
+
+function renderChordSplit(doc: PDFKit.PDFDocument, symbol: string, cx: number, cy: number) {
+  if (symbol === "%") {
+    doc.fontSize(20).fillColor(C.lightGray).font("Helvetica")
+       .text("%", cx - 8, cy, { width: 16, align: "center" });
+    return;
+  }
+
+  const { root, quality } = splitChord(symbol);
+
+  // Root (large)
+  doc.fontSize(22).fillColor(C.black).font("Helvetica-Bold")
+     .text(root, cx - 20, cy, { width: 40, align: "center" });
+
+  // Quality (small, superscript-like)
+  if (quality) {
+    doc.fontSize(11).fillColor(C.black).font("Helvetica-Bold")
+       .text(quality, cx + 6, cy - 4, { width: 30, align: "left" });
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
-// STIL 2: Songbook (ackord ovanför text, som Real Book)
+// STIL 2: Songbook (ChordPro-inspired, clean text format)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function renderSongbook(doc: PDFKit.PDFDocument, song: SongForExport) {
@@ -243,92 +286,64 @@ function renderSongbook(doc: PDFKit.PDFDocument, song: SongForExport) {
   // ── Header ──────────────────────────────────────────────────────────────────
   doc.fontSize(26).fillColor(C.black).font("Helvetica-Bold")
      .text(song.title, MARGIN, y, { width: INNER_W });
-  y += 34;
+  y += 32;
 
-  const sub: string[] = [];
-  if (song.artist)         sub.push(song.artist);
-  if (song.key)            sub.push(`Tonart: ${song.key}`);
-  if (song.tempo)          sub.push(`♩ = ${song.tempo}`);
-  if (song.timeSignature)  sub.push(song.timeSignature);
-  if (song.style)          sub.push(song.style);
+  // ── Meta line ────────────────────────────────────────────────────────────────
+  const meta: string[] = [];
+  if (song.artist) meta.push(song.artist);
+  if (song.key) meta.push(`Tonart: ${song.key}`);
+  if (song.tempo) meta.push(`Tempo: ${song.tempo}`);
+  if (song.timeSignature) meta.push(song.timeSignature);
 
-  if (sub.length) {
-    doc.fontSize(11).fillColor(C.midGray).font("Helvetica")
-       .text(sub.join("   •   "), MARGIN, y, { width: INNER_W });
-    y += 18;
+  if (meta.length) {
+    doc.fontSize(10).fillColor(C.midGray).font("Helvetica")
+       .text(meta.join("   •   "), MARGIN, y, { width: INNER_W, align: "left" });
+    y += 14;
   }
 
   doc.moveTo(MARGIN, y).lineTo(MARGIN + INNER_W, y)
-     .strokeColor(C.black).lineWidth(1.5).stroke();
-  y += 16;
+     .strokeColor(C.divider).lineWidth(1.5).stroke();
+  y += 12;
 
-  // ── Sections ────────────────────────────────────────────────────────────────
-  const BARS_PER_ROW = 4;
-  const CHORD_H = 16; // height for chord line
-  const LYRIC_H = 14; // height for lyric line
-  const ROW_PAD = 6;
+  // ── Sections (ChordPro style) ────────────────────────────────────────────────
+  const LINE_HEIGHT = 18;
+  const CHORD_LINE_H = 14;
+  const GAP_AFTER_SECTION = 8;
 
   for (const section of song.sections) {
     if (section.type === "note") {
-      y = ensureSpace(doc, y, 24);
+      y = ensureSpace(doc, y, 22);
       doc.fontSize(9).fillColor(C.midGray).font("Helvetica-Oblique")
          .text(section.noteText ?? "", MARGIN, y, { width: INNER_W });
-      y += 18;
+      y += 16;
       continue;
     }
 
     const bars = barsOf(section);
     if (!bars.length) continue;
 
-    y = ensureSpace(doc, y, 60);
+    y = ensureSpace(doc, y, 40);
 
-    // Section label
-    doc.fontSize(12).fillColor(C.accent).font("Helvetica-Bold")
+    // ── Section header ──────────────────────────────────────────────────
+    doc.fontSize(11).fillColor(C.accent).font("Helvetica-Bold")
        .text(`[${section.name ?? ""}]`, MARGIN, y);
-    y += 18;
+    y += LINE_HEIGHT + 2;
 
-    // Rows of BARS_PER_ROW
-    const hasLyrics = bars.some((b) => b.lyrics);
-    const rowH = CHORD_H + (hasLyrics ? LYRIC_H : 0) + ROW_PAD;
-    const barW = INNER_W / BARS_PER_ROW;
-
-    for (let row = 0; row * BARS_PER_ROW < bars.length; row++) {
-      y = ensureSpace(doc, y, rowH + 4);
-
-      const rowBars = bars.slice(row * BARS_PER_ROW, row * BARS_PER_ROW + BARS_PER_ROW);
-
-      // Draw bar lines
-      for (let ci = 0; ci <= rowBars.length; ci++) {
-        const lx = MARGIN + ci * barW;
-        const lw = ci === 0 || ci === rowBars.length ? 1.5 : 0.5;
-        doc.moveTo(lx, y).lineTo(lx, y + CHORD_H + (hasLyrics ? LYRIC_H : 0))
-           .strokeColor(C.darkGray).lineWidth(lw).stroke();
-      }
-
-      // Chords & lyrics per bar
-      rowBars.forEach((bar, ci) => {
-        const bx = MARGIN + ci * barW;
+    // ── Chord progression line (ChordPro format: "Cm | Ab Bb | Cm | Ab Bb") ──
+    const chordLine = bars
+      .map((bar) => {
         const ch = barChords(bar);
-        let chText = "";
-        if (ch.length === 0) chText = "%";
-        else if (ch.length === 1) chText = ch[0].symbol;
-        else chText = ch.map((c) => `${c.symbol}`).join("  ");
+        if (ch.length === 0) return "%";
+        return ch.map((c) => c.symbol).join(" ");
+      })
+      .join(" | ");
 
-        doc.fontSize(13).fillColor(C.black).font("Helvetica-Bold")
-           .text(chText, bx + 4, y + 1, { width: barW - 8, lineBreak: false });
-
-        if (hasLyrics && bar.lyrics) {
-          doc.fontSize(9).fillColor(C.midGray).font("Helvetica-Oblique")
-             .text(bar.lyrics, bx + 4, y + CHORD_H, { width: barW - 8, lineBreak: false });
-        }
-      });
-
-      y += rowH;
-    }
-
-    y += 12;
+    doc.fontSize(12).fillColor(C.black).font("Helvetica-Bold")
+       .text(chordLine, MARGIN, y, { width: INNER_W });
+    y += CHORD_LINE_H + GAP_AFTER_SECTION;
   }
 
+  // ── Notes ────────────────────────────────────────────────────────────────────
   if (song.notes) {
     y = ensureSpace(doc, y, 30);
     doc.fontSize(9).fillColor(C.midGray).font("Helvetica-Oblique")
@@ -339,40 +354,39 @@ function renderSongbook(doc: PDFKit.PDFDocument, song: SongForExport) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// STIL 3: Notation (staff-look med ackordsymboler)
+// STIL 3: Notation (Leadsheet with staff lines and chord symbols)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function renderNotation(doc: PDFKit.PDFDocument, song: SongForExport) {
   let y = MARGIN;
 
   // ── Header ──────────────────────────────────────────────────────────────────
-  doc.fontSize(20).fillColor(C.black).font("Helvetica-Bold")
+  doc.fontSize(22).fillColor(C.black).font("Helvetica-Bold")
      .text(song.title, MARGIN, y, { width: INNER_W, align: "center" });
-  y += 26;
+  y += 28;
 
-  const sub: string[] = [];
-  if (song.artist)         sub.push(song.artist);
-  if (song.key)            sub.push(`Tonart: ${song.key}`);
-  if (song.tempo)          sub.push(`♩ = ${song.tempo}`);
-  if (song.timeSignature)  sub.push(song.timeSignature);
+  // ── Meta line ────────────────────────────────────────────────────────────────
+  const meta: string[] = [];
+  if (song.artist) meta.push(song.artist);
+  if (song.key) meta.push(`Tonart: ${song.key}`);
+  if (song.tempo) meta.push(`♩ = ${song.tempo}`);
+  if (song.timeSignature) meta.push(song.timeSignature);
 
-  if (sub.length) {
+  if (meta.length) {
     doc.fontSize(10).fillColor(C.midGray).font("Helvetica")
-       .text(sub.join("   •   "), MARGIN, y, { width: INNER_W, align: "center" });
-    y += 16;
+       .text(meta.join("   •   "), MARGIN, y, { width: INNER_W, align: "center" });
+    y += 14;
   }
   y += 4;
 
-  // ── Staff rendering ──────────────────────────────────────────────────────────
+  // ── Staff rendering ─────────────────────────────────────────────────────────
   const STAFF_LINES = 5;
-  const STAFF_LINE_H = 6;   // spacing between staff lines
-  const STAFF_H = STAFF_LINE_H * (STAFF_LINES - 1); // 24
-  const CHORD_ZONE = 18;    // space above staff for chord symbols
-  const LYRIC_ZONE = 14;    // space below staff for lyrics
-  const SYSTEM_H = CHORD_ZONE + STAFF_H + LYRIC_ZONE + 14;
-
+  const STAFF_LINE_H = 6; // Spacing between lines
+  const STAFF_H = STAFF_LINE_H * (STAFF_LINES - 1); // Total height = 24
+  const CHORD_ZONE = 16; // Space above staff for chords
+  const SYSTEM_H = CHORD_ZONE + STAFF_H + 18;
   const BARS_PER_SYSTEM = 4;
-  const barW = INNER_W / BARS_PER_SYSTEM;
+  const BAR_W = INNER_W / BARS_PER_SYSTEM;
 
   for (const section of song.sections) {
     if (section.type === "note") {
@@ -388,93 +402,91 @@ function renderNotation(doc: PDFKit.PDFDocument, song: SongForExport) {
 
     y = ensureSpace(doc, y, SYSTEM_H + 10);
 
-    // Section label
+    // ── Section label ────────────────────────────────────────────────────
     doc.fontSize(11).fillColor(C.accent).font("Helvetica-Bold")
-       .text(section.name ?? "", MARGIN, y);
-    y += 14;
+       .text(`[${section.name ?? ""}]`, MARGIN, y);
+    y += 16;
 
+    // ── Render bar systems (groups of BARS_PER_SYSTEM) ──────────────────
     const numSystems = Math.ceil(bars.length / BARS_PER_SYSTEM);
-
     for (let sys = 0; sys < numSystems; sys++) {
       y = ensureSpace(doc, y, SYSTEM_H);
 
-      const systemBars = bars.slice(sys * BARS_PER_SYSTEM, sys * BARS_PER_SYSTEM + BARS_PER_SYSTEM);
+      const systemBars = bars.slice(
+        sys * BARS_PER_SYSTEM,
+        sys * BARS_PER_SYSTEM + BARS_PER_SYSTEM
+      );
       const staffY = y + CHORD_ZONE;
 
-      // Draw 5 staff lines
-      for (let l = 0; l < STAFF_LINES; l++) {
-        const ly = staffY + l * STAFF_LINE_H;
-        doc.moveTo(MARGIN, ly).lineTo(MARGIN + INNER_W, ly)
+      // ── Draw staff lines ─────────────────────────────────────────────
+      for (let line = 0; line < STAFF_LINES; line++) {
+        const lineY = staffY + line * STAFF_LINE_H;
+        doc.moveTo(MARGIN, lineY).lineTo(MARGIN + INNER_W, lineY)
            .strokeColor(C.staffLine).lineWidth(0.5).stroke();
       }
 
-      // Bar lines
+      // ── Draw barlines (left, middle between bars, right) ──────────────
       for (let bi = 0; bi <= systemBars.length; bi++) {
-        const bx = MARGIN + bi * barW;
-        const lw = bi === 0 || bi === systemBars.length ? 1.5 : 0.75;
+        const bx = MARGIN + bi * BAR_W;
+        const isEnd = bi === 0 || bi === systemBars.length;
+        const lw = isEnd ? 1.5 : 0.75;
         doc.moveTo(bx, staffY).lineTo(bx, staffY + STAFF_H)
            .strokeColor(C.black).lineWidth(lw).stroke();
       }
 
-      // Double bar at end of last system of section
+      // ── Final double bar (at end of section) ──────────────────────────
       if (sys === numSystems - 1) {
-        const ex = MARGIN + systemBars.length * barW;
-        doc.moveTo(ex - 2, staffY).lineTo(ex - 2, staffY + STAFF_H)
+        const finalX = MARGIN + systemBars.length * BAR_W;
+        doc.moveTo(finalX - 3, staffY).lineTo(finalX - 3, staffY + STAFF_H)
            .strokeColor(C.black).lineWidth(2.5).stroke();
       }
 
-      // Time signature on first bar of first system
+      // ── Time signature (first bar of first system only) ────────────────
       if (sys === 0 && song.timeSignature) {
         const [num, den] = (song.timeSignature || "4/4").split("/");
         doc.fontSize(12).fillColor(C.black).font("Helvetica-Bold");
-        doc.text(num ?? "4", MARGIN + 4, staffY - 1, { lineBreak: false });
-        doc.text(den ?? "4", MARGIN + 4, staffY + STAFF_H / 2 + 1, { lineBreak: false });
+        doc.text(num ?? "4", MARGIN + 4, staffY - 2, { lineBreak: false });
+        doc.text(den ?? "4", MARGIN + 4, staffY + STAFF_H / 2 + 2, { lineBreak: false });
       }
 
-      // Chords & lyrics per bar
+      // ── Chord symbols above each bar ──────────────────────────────────
       systemBars.forEach((bar, bi) => {
-        const bx = MARGIN + bi * barW;
+        const bx = MARGIN + bi * BAR_W;
         const ch = barChords(bar);
-        let chText = ch.length === 0 ? "%" : ch.map((c) => c.symbol).join("  ");
 
-        // Chord symbol above staff
-        doc.fontSize(11).fillColor(C.black).font("Helvetica-Bold")
-           .text(chText, bx + 5, y + 3, { width: barW - 10, lineBreak: false });
-
-        // Lyrics below staff
-        if (bar.lyrics) {
-          doc.fontSize(8).fillColor(C.midGray).font("Helvetica-Oblique")
-             .text(bar.lyrics, bx + 4, staffY + STAFF_H + 4, {
-               width: barW - 8, lineBreak: false,
-             });
+        if (ch.length > 0) {
+          const chordText = ch.map((c) => c.symbol).join("  ");
+          doc.fontSize(10).fillColor(C.black).font("Helvetica-Bold")
+             .text(chordText, bx + 3, y + 2, { width: BAR_W - 6, lineBreak: false });
         }
       });
 
       y += SYSTEM_H;
     }
 
-    y += 8;
+    y += 4;
   }
 
+  // ── Notes ────────────────────────────────────────────────────────────────────
   if (song.notes) {
     y = ensureSpace(doc, y, 26);
     doc.fontSize(9).fillColor(C.midGray).font("Helvetica-Oblique")
        .text(`Not: ${song.notes}`, MARGIN, y, { width: INNER_W });
   }
 
-  footer(doc, "Notation");
+  footer(doc, "Leadsheet");
 }
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
 function footer(doc: PDFKit.PDFDocument, style: string) {
-  const y = PAGE.h - MARGIN + 8;
+  const y = PAGE.h - MARGIN + 6;
   doc.fontSize(7).fillColor(C.lightGray).font("Helvetica")
      .text(`DAJO 3.0  •  ${style}  •  ${new Date().toLocaleDateString("sv-SE")}`,
            MARGIN, y, { width: INNER_W, align: "center" });
 }
 
-/** Make sure we have enough vertical space; if not, add a new page */
+/** Ensure enough vertical space; if not, add a new page */
 function ensureSpace(doc: PDFKit.PDFDocument, y: number, needed: number): number {
   if (y + needed > PAGE.h - MARGIN - 20) {
     doc.addPage();
