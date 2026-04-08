@@ -10,10 +10,12 @@ import { useLocation } from "wouter";
 import {
   Upload, X, FileText, Image, Loader2,
   CheckCircle2, AlertCircle, Music, ChevronRight,
+  Grid3x3, BookOpen, Music2,
 } from "lucide-react";
 import { apiFetch } from "../lib/api";
 
 type Step = "idle" | "uploading" | "analyzing" | "preview" | "saving" | "done" | "error";
+type Format = "ireal" | "songbook" | "notation";
 
 interface ImportedSong {
   title: string;
@@ -22,9 +24,15 @@ interface ImportedSong {
   tempo: number;
   timeSignature: string;
   style: string;
-  preferredFormat: string;
+  preferredFormat: Format;
   sections: any[];
 }
+
+const FORMAT_LABELS: Record<Format, { label: string; desc: string; icon: React.ReactNode }> = {
+  ireal:    { label: "iReal",    desc: "Ackordschema i rutnät",         icon: <Grid3x3 size={14} /> },
+  songbook: { label: "Songbook", desc: "Text + ackord (ChordPro)",      icon: <BookOpen size={14} /> },
+  notation: { label: "Notation", desc: "Notlinjer + leadsheet",         icon: <Music2 size={14} /> },
+};
 
 interface Props {
   onClose: () => void;
@@ -61,6 +69,10 @@ export default function ImportDialog({ onClose }: Props) {
   const [error, setError] = useState("");
   const [model, setModel] = useState("");
   const [tokens, setTokens] = useState(0);
+  const [detectedFormat, setDetectedFormat] = useState<Format>("ireal");
+  const [detectionConfidence, setDetectionConfidence] = useState(0);
+  const [detectionSignals, setDetectionSignals] = useState<string[]>([]);
+  const [overrideFormat, setOverrideFormat] = useState<Format | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
@@ -80,7 +92,14 @@ export default function ImportDialog({ onClose }: Props) {
       const base64 = await fileToBase64(f);
       setStep("analyzing");
 
-      const result = await apiFetch<{ songs: ImportedSong[]; tokensUsed: number; model: string }>(
+      const result = await apiFetch<{
+        songs: ImportedSong[];
+        tokensUsed: number;
+        model: string;
+        detectedFormat: Format;
+        detectionConfidence: number;
+        detectionSignals: string[];
+      }>(
         "/api/import/analyze",
         {
           method: "POST",
@@ -95,6 +114,10 @@ export default function ImportDialog({ onClose }: Props) {
       setSongs(result.songs);
       setModel(result.model);
       setTokens(result.tokensUsed);
+      setDetectedFormat(result.detectedFormat ?? result.songs[0]?.preferredFormat ?? "ireal");
+      setDetectionConfidence(result.detectionConfidence ?? 0);
+      setDetectionSignals(result.detectionSignals ?? []);
+      setOverrideFormat(null);
       setSelected(new Set(result.songs.map((_, i) => i)));
       setStep("preview");
     } catch (err: any) {
@@ -123,8 +146,12 @@ export default function ImportDialog({ onClose }: Props) {
     });
   };
 
+  const activeFormat = overrideFormat ?? detectedFormat;
+
   const saveSelected = async () => {
-    const toSave = songs.filter((_, i) => selected.has(i));
+    const toSave = songs
+      .filter((_, i) => selected.has(i))
+      .map((s) => ({ ...s, preferredFormat: activeFormat }));
     if (toSave.length === 0) return;
 
     setStep("saving");
@@ -245,10 +272,43 @@ export default function ImportDialog({ onClose }: Props) {
                 <span className="text-sm text-gray-600">
                   {songs.length === 1 ? "1 låt hittad" : `${songs.length} låtar hittade`}
                 </span>
-                <span className="ml-auto text-xs text-gray-300">{model} · {tokens.toLocaleString()} tokens</span>
+                <span className="ml-auto text-xs text-gray-300">{tokens.toLocaleString()} tokens</span>
               </div>
 
-              <div className="flex flex-col gap-2 max-h-72 overflow-y-auto mb-4">
+              {/* Format-detektion + väljare */}
+              <div className="mb-4 rounded-xl border border-gray-200 p-3 bg-gray-50">
+                <p className="text-xs font-medium text-gray-500 mb-2">
+                  Detekterat format
+                  {detectionConfidence > 0 && (
+                    <span className="ml-1 text-gray-400">
+                      ({Math.round(detectionConfidence * 100)}% säkerhet)
+                    </span>
+                  )}
+                </p>
+                <div className="flex gap-2">
+                  {(Object.entries(FORMAT_LABELS) as [Format, typeof FORMAT_LABELS[Format]][]).map(([fmt, info]) => (
+                    <button
+                      key={fmt}
+                      onClick={() => setOverrideFormat(fmt === detectedFormat ? null : fmt)}
+                      className={`flex-1 flex flex-col items-center gap-1 p-2 rounded-lg border text-xs transition-all
+                        ${activeFormat === fmt
+                          ? "border-indigo-400 bg-indigo-50 text-indigo-700 font-medium"
+                          : "border-gray-200 text-gray-500 hover:border-gray-300"}`}
+                    >
+                      {info.icon}
+                      <span>{info.label}</span>
+                    </button>
+                  ))}
+                </div>
+                {overrideFormat && (
+                  <p className="text-xs text-amber-600 mt-2 flex items-center gap-1">
+                    <AlertCircle size={11} />
+                    Format ändrat manuellt — låten extraheras om vid sparning
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-2 max-h-56 overflow-y-auto mb-4">
                 {songs.map((song, i) => (
                   <div
                     key={i}
@@ -286,7 +346,7 @@ export default function ImportDialog({ onClose }: Props) {
                   <ChevronRight size={16} />
                 </button>
                 <button
-                  onClick={() => { setStep("idle"); setFile(null); setSongs([]); }}
+                  onClick={() => { setStep("idle"); setFile(null); setSongs([]); setOverrideFormat(null); }}
                   className="px-4 text-sm text-gray-400 hover:text-gray-600 transition-colors"
                 >
                   Ny fil

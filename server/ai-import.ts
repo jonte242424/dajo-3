@@ -1,289 +1,142 @@
 /**
  * DAJO AI Import Pipeline
- * Uses Claude (Anthropic) to analyze PDFs, images, and sheet music
- * and convert them to DAJO's Section → Bar → ChordEntry format.
+ *
+ * Steg 1: detect-format.ts   — Snabb textbaserad föranalys (gratis)
+ * Steg 2: classify-format.ts — Claude Sonnet vision-klassificering (billig)
+ * Steg 3: extract-*.ts       — Format-specifik extraktion (optimerad prompt)
  */
 
-import Anthropic from "@anthropic-ai/sdk";
-import type { Section, Bar, ChordEntry, TimeSignature } from "../shared/types.js";
+import type { Section, TimeSignature } from "../shared/types.js";
+import type { PreferredFormat } from "../shared/types.js";
+import { detectFormat } from "./import/detect-format.js";
+import { classifyFormat } from "./import/classify-format.js";
+import { extractIReal } from "./import/extract-ireal.js";
+import { extractSongbook } from "./import/extract-songbook.js";
+import { extractNotation } from "./import/extract-notation.js";
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+export type MediaType = "application/pdf" | "image/jpeg" | "image/png" | "image/gif" | "image/webp";
 
-// ─── Font normalization (common PDF music fonts → standard ASCII) ─────────────
-
-function normalizeMusicFonts(text: string): string {
-  return text
-    .replace(/Œ„Š/g, "maj")   // DŒ„Š7 → Dmaj7
-    .replace(/©(?![\s,])/g, "#")  // F© → F# (but not standalone ©)
-    .replace(/‹/g, "m")        // C‹ → Cm
-    .replace(/©‹/g, "#m")      // G©‹ → G#m
-    .replace(/°7/g, "dim7")    // C°7 → Cdim7
-    .replace(/°/g, "dim")      // C° → Cdim
-    .replace(/ø/g, "m7b5")     // Cø → Cm7b5
-    .replace(/∆/g, "maj7")     // C∆ → Cmaj7
-    .replace(/Δ/g, "maj7")     // CΔ → Cmaj7
-    .replace(/♭/g, "b")
-    .replace(/♯/g, "#");
-}
-
-// ─── The system prompt — the brain of the import ─────────────────────────────
-
-const SYSTEM_PROMPT = `Du är en expert på musiknotation och kompskisser. Din uppgift är att analysera noter, lead sheets, ackordscheman och kompskisser och konvertera dem till ett strukturerat JSON-format.
-
-## UTDATAFORMAT (returnera ALLTID giltig JSON, inget annat):
-
-\`\`\`json
-{
-  "songs": [
-    {
-      "title": "Låttitel",
-      "artist": "Artist/Kompositör",
-      "key": "C",
-      "tempo": 120,
-      "timeSignature": "4/4",
-      "style": "Jazz",
-      "preferredFormat": "ireal",
-      "sections": [
-        {
-          "name": "A",
-          "type": "bars",
-          "bars": [
-            {
-              "chords": [
-                { "symbol": "Cmaj7", "beat": 1 },
-                { "symbol": "Am7", "beat": 3 }
-              ],
-              "lyrics": "",
-              "repeat": "none"
-            }
-          ]
-        }
-      ]
-    }
-  ]
-}
-\`\`\`
-
-## REGLER:
-
-### Ackord:
-- Använd standardnotation: Cmaj7, Am7, D7, F#m7b5, Bb7, Ebmaj7
-- "beat" är 1, 2, 3 eller 4 — var i takten ackordet spelas
-- Om ett ackord varar hela takten: beat 1
-- Om två ackord per takt (vanligt i jazz): beat 1 och beat 3
-- Slash-ackord: "C/E" (C-ackord med E i basen)
-
-### Sektioner:
-- Namnge sektioner korrekt: "Intro", "A", "B", "C", "Vers", "Refräng", "Bridge", "Outro", "Coda", "Solo"
-- Om originalet har bokstavsbeteckningar (A, B, C): behåll dem
-- Om originalet har svenska/engelska sektionsnamn: behåll dem
-
-### Repeat-tecken:
-- "none" = ingen repeat
-- "start" = repeatbörjan (‖:)
-- "end" = repeatslut (:‖)
-- "both" = både start och slut (‖:‖)
-
-### Tonart (key):
-- Durtonarter: C, Db, D, Eb, E, F, F#, G, Ab, A, Bb, B
-- Molltonarter: Cm, Dm, Em, Fm, Gm, Am, Bm, Dbm, Ebm, F#m, G#m, Bbm
-- Avgör tonart från nyckelns förtecken och ackordens karaktär
-
-### Taktart (timeSignature): "4/4", "3/4", "6/8", "2/4", "5/4"
-
-### Stil (style): "Jazz", "Bossa Nova", "Pop", "Rock", "Blues", "Ballad", "Funk", "Latin", "Swing", "Folk"
-
-### preferredFormat:
-- "ireal" om det är ett ackordschema (kompskiss)
-- "songbook" om det är text + ackord (låttext med ackord ovanför)
-- "notation" om det är noter
-
-### VIKTIGT:
-- Om dokumentet innehåller FLERA låtar: returnera dem alla i songs-arrayen
-- Missa INGA takter — analysera hela dokumentet
-- Om texten är otydlig: gör ditt bästa och förklara ingenting — returnera bara JSON
-- Tomma takter: { "chords": [], "lyrics": "", "repeat": "none" }
-- Returera BARA JSON — inga förklaringar, ingen markdown runtomkring`;
-
-// ─── Parse Claude's response → Section[] ─────────────────────────────────────
-
-interface ImportedSong {
+export interface ImportedSong {
   title: string;
   artist: string;
   key: string;
   tempo: number;
   timeSignature: TimeSignature;
   style: string;
-  preferredFormat: "ireal" | "songbook" | "notation";
+  preferredFormat: PreferredFormat;
+  capo?: number;
   sections: Section[];
 }
 
-function parseClaudeResponse(content: string): ImportedSong[] {
-  // Strip markdown code blocks if present
-  let json = content.trim();
-  json = json.replace(/^```json\s*/i, "").replace(/```\s*$/i, "").trim();
-  json = json.replace(/^```\s*/i, "").replace(/```\s*$/i, "").trim();
-
-  let parsed: any;
-  try {
-    parsed = JSON.parse(json);
-  } catch {
-    // Try to extract JSON from the response
-    const match = json.match(/\{[\s\S]*\}/);
-    if (match) parsed = JSON.parse(match[0]);
-    else throw new Error("Kunde inte tolka AI-svaret som JSON");
-  }
-
-  const songs: ImportedSong[] = parsed.songs ?? [parsed];
-
-  return songs.map((song: any) => ({
-    title: song.title || "Okänd låt",
-    artist: song.artist || "",
-    key: song.key || "C",
-    tempo: Number(song.tempo) || 120,
-    timeSignature: (song.timeSignature || "4/4") as TimeSignature,
-    style: song.style || "",
-    preferredFormat: song.preferredFormat || "ireal",
-    sections: (song.sections || []).map((sec: any, si: number) => ({
-      id: crypto.randomUUID(),
-      name: sec.name || `Sektion ${si + 1}`,
-      type: sec.type || "bars",
-      noteText: sec.noteText,
-      bars: (sec.bars || []).map((bar: any) => ({
-        chords: (bar.chords || [])
-          .filter((c: any) => c?.symbol)
-          .map((c: any) => ({
-            symbol: String(c.symbol).trim(),
-            beat: Number(c.beat) || 1,
-          } as ChordEntry)),
-        lyrics: bar.lyrics || "",
-        repeat: bar.repeat || "none",
-        repeatCount: bar.repeatCount,
-        ending: bar.ending,
-        navigation: bar.navigation,
-      } as Bar)),
-    })),
-  }));
-}
-
-// ─── Main analysis function ───────────────────────────────────────────────────
-
-export type MediaType = "application/pdf" | "image/jpeg" | "image/png" | "image/gif" | "image/webp";
-
-interface AnalyzeResult {
+export interface AnalyzeResult {
   songs: ImportedSong[];
   tokensUsed: number;
   model: string;
+  detectedFormat: PreferredFormat;
+  detectionConfidence: number;
+  detectionSignals: string[];
 }
+
+// ─── Font normalization ───────────────────────────────────────────────────────
+
+export function normalizeMusicFonts(text: string): string {
+  return text
+    .replace(/Œ„Š/g, "maj")
+    .replace(/©(?![\s,])/g, "#")
+    .replace(/‹/g, "m")
+    .replace(/©‹/g, "#m")
+    .replace(/°7/g, "dim7")
+    .replace(/°/g, "dim")
+    .replace(/ø/g, "m7b5")
+    .replace(/∆/g, "maj7")
+    .replace(/Δ/g, "maj7")
+    .replace(/♭/g, "b")
+    .replace(/♯/g, "#");
+}
+
+// ─── Huvud-analysfunktion ─────────────────────────────────────────────────────
 
 export async function analyzeFile(
   base64Data: string,
   mediaType: MediaType,
-  filename: string
+  filename: string,
+  extractedText?: string
 ): Promise<AnalyzeResult> {
   if (!process.env.ANTHROPIC_API_KEY) {
-    throw new Error("ANTHROPIC_API_KEY saknas — lägg till den i .env.local");
+    throw new Error("ANTHROPIC_API_KEY saknas — lägg till den i miljövariablerna");
   }
 
-  // First pass: primary analysis
-  const primaryResponse = await anthropic.messages.create({
-    model: "claude-opus-4-6",
-    max_tokens: 8192,
-    system: SYSTEM_PROMPT,
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "document" as any,
-            source: {
-              type: "base64",
-              media_type: mediaType,
-              data: base64Data,
-            },
-          } as any,
-          {
-            type: "text",
-            text: `Analysera denna fil ("${filename}") och returnera ALLA låtar som JSON enligt systemprompten. Missa inga takter eller sektioner.`,
-          },
-        ],
-      },
-    ],
-  });
+  const normalizedText = extractedText ? normalizeMusicFonts(extractedText) : "";
 
-  const primaryContent = primaryResponse.content[0];
-  if (primaryContent.type !== "text") throw new Error("Oväntat svar från Claude");
+  // ── Steg 1: Snabb textbaserad föranalys ──────────────────────────────────
 
-  let primaryText = normalizeMusicFonts(primaryContent.text);
-  const primarySongs = parseClaudeResponse(primaryText);
-  const primaryBars = primarySongs.reduce((sum, s) =>
-    sum + s.sections.reduce((ss, sec) => ss + sec.bars.length, 0), 0);
+  const detection = detectFormat(normalizedText, filename);
+  console.log(`[Import] Steg 1 detect: ${detection.format ?? "okänt"} (confidence: ${detection.confidence.toFixed(2)})`);
+  console.log(`[Import] Signaler: ${detection.signals.join(", ")}`);
 
-  // Completeness check: if result looks thin, run a verification pass
-  const totalInputTokens = primaryResponse.usage?.input_tokens || 0;
-  const completionTokens = primaryResponse.usage?.output_tokens || 0;
-  const needsVerification = completionTokens < 2000 || primaryBars < 4;
+  let format: PreferredFormat;
+  let classificationModel = "detect-format (textanalys)";
 
-  if (needsVerification && primaryBars > 0) {
+  if (detection.format && detection.confidence >= 0.5) {
+    // Tillräcklig confidence från textanalys — hoppa över AI-klassificering
+    format = detection.format;
+    console.log(`[Import] Steg 2 hoppas över — tillräcklig confidence från textanalys`);
+  } else {
+    // ── Steg 2: Claude Sonnet vision-klassificering ────────────────────────
+    console.log(`[Import] Steg 2: Skickar till Claude Sonnet för klassificering...`);
     try {
-      const verifyResponse = await anthropic.messages.create({
-        model: "claude-sonnet-4-6",
-        max_tokens: 4096,
-        system: SYSTEM_PROMPT,
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "document" as any,
-                source: { type: "base64", media_type: mediaType, data: base64Data },
-              } as any,
-              {
-                type: "text",
-                text: `Verifiera och komplettera denna analys. Kontrollera specifikt:
-1. Missade repeat-tecken (‖: :‖)?
-2. Missade volta-brackets (1. 2. 3.)?
-3. Sektionsvariationer (samma sektionsnamn men olika ackord)?
-4. Navigationsmarkeringar (D.S., D.C., Coda, Fine)?
-
-Nuvarande analys:
-${primaryText}
-
-Returnera den kompletta, korrigerade versionen som JSON.`,
-              },
-            ],
-          },
-        ],
-      });
-
-      const verifyContent = verifyResponse.content[0];
-      if (verifyContent.type === "text") {
-        const verifiedText = normalizeMusicFonts(verifyContent.text);
-        const verifiedSongs = parseClaudeResponse(verifiedText);
-        const verifiedBars = verifiedSongs.reduce((sum, s) =>
-          sum + s.sections.reduce((ss, sec) => ss + sec.bars.length, 0), 0);
-
-        // Keep the better result (more bars = more complete)
-        if (verifiedBars >= primaryBars) {
-          return {
-            songs: verifiedSongs,
-            tokensUsed: totalInputTokens + completionTokens + (verifyResponse.usage?.output_tokens || 0),
-            model: "claude-opus-4-6 + claude-sonnet-4-6 (verifierad)",
-          };
-        }
-      }
-    } catch {
-      // Verification failed — use primary result
+      const classification = await classifyFormat(base64Data, mediaType, normalizedText);
+      format = classification.format;
+      classificationModel = `claude-sonnet-4-6 (klassificering: ${classification.reasoning})`;
+      console.log(`[Import] Steg 2 resultat: ${format} (confidence: ${classification.confidence.toFixed(2)}) — ${classification.reasoning}`);
+    } catch (err) {
+      // Fallback: om klassificering misslyckas, gissa iReal (vanligaste)
+      console.error("[Import] Klassificering misslyckades, fallback till iReal:", err);
+      format = detection.format ?? "ireal";
+      classificationModel = "fallback (iReal)";
     }
   }
 
+  // ── Steg 3: Format-specifik extraktion ───────────────────────────────────
+
+  console.log(`[Import] Steg 3: Extraherar som ${format}...`);
+
+  let songs: ImportedSong[];
+  let extractionModel: string;
+
+  try {
+    switch (format) {
+      case "songbook":
+        songs = await extractSongbook(base64Data, mediaType, filename, normalizedText);
+        extractionModel = "claude-sonnet-4-6 (songbook)";
+        break;
+      case "notation":
+        songs = await extractNotation(base64Data, mediaType, filename, normalizedText);
+        extractionModel = "claude-sonnet-4-6 (notation)";
+        break;
+      case "ireal":
+      default:
+        songs = await extractIReal(base64Data, mediaType, filename, normalizedText);
+        extractionModel = "claude-sonnet-4-6 (ireal)";
+        break;
+    }
+  } catch (err) {
+    console.error(`[Import] Extraktion som ${format} misslyckades:`, err);
+    throw new Error(`Kunde inte extrahera låt som ${format}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  if (!songs.length) {
+    throw new Error("Inga låtar hittades i dokumentet");
+  }
+
+  console.log(`[Import] Klar: ${songs.length} låt(ar) extraherade`);
+
   return {
-    songs: primarySongs,
-    tokensUsed: totalInputTokens + completionTokens,
-    model: "claude-opus-4-6",
+    songs,
+    tokensUsed: 0, // TODO: summera tokens från alla anrop
+    model: `${classificationModel} → ${extractionModel}`,
+    detectedFormat: format,
+    detectionConfidence: detection.confidence,
+    detectionSignals: detection.signals,
   };
 }
-
-export type { ImportedSong };
