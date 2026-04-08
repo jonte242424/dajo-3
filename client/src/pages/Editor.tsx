@@ -4,8 +4,10 @@ import { useState, useEffect, useCallback } from "react";
 import {
   ArrowLeft, Save, Plus, Trash2, ChevronDown,
   ChevronUp, Music, Settings, Repeat, Download, Share2, Check,
+  RotateCcw, RotateCw,
 } from "lucide-react";
 import { apiFetch, authFetch } from "../lib/api";
+import { useUndoRedo } from "../hooks/useUndoRedo";
 import ChordInput from "../components/ChordInput";
 import { ExportDialog } from "../components/ExportDialog";
 import { ChordPlayerButton, AudioSettings } from "../components/ChordPlayer";
@@ -319,7 +321,7 @@ export default function Editor() {
   const [tempo, setTempo] = useState(120);
   const [timeSignature, setTimeSignature] = useState("4/4");
   const [style, setStyle] = useState("");
-  const [sections, setSections] = useState<Section[]>([]);
+  const { state: sections, setState: setSections, undo, redo, canUndo, canRedo } = useUndoRedo<Section[]>([]);
   const [notes, setNotes] = useState("");
   const [activeBarKey, setActiveBarKey] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -411,18 +413,26 @@ export default function Editor() {
     },
   });
 
-  // Keyboard shortcut: Cmd+S
+  // Keyboard shortcuts: Cmd+S, Cmd+Z (undo), Cmd+Shift+Z (redo)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "s") {
         e.preventDefault();
         saveMutation.mutate();
       }
+      if ((e.metaKey || e.ctrlKey) && e.key === "z") {
+        e.preventDefault();
+        if (e.shiftKey) {
+          redo();
+        } else {
+          undo();
+        }
+      }
       if (e.key === "Escape") setActiveBarKey(null);
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [saveMutation]);
+  }, [saveMutation, undo, redo]);
 
   const updateSection = useCallback((idx: number, s: Section) => {
     setSections((prev) => { const n = [...prev]; n[idx] = s; return n; });
@@ -483,6 +493,22 @@ export default function Editor() {
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={undo}
+            disabled={!canUndo}
+            title="Ångra (Cmd+Z)"
+            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 disabled:opacity-30 transition-colors"
+          >
+            <RotateCcw size={16} />
+          </button>
+          <button
+            onClick={redo}
+            disabled={!canRedo}
+            title="Gör om (Cmd+Shift+Z)"
+            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 disabled:opacity-30 transition-colors"
+          >
+            <RotateCw size={16} />
+          </button>
           <button
             onClick={() => setShowSettings(!showSettings)}
             className={`p-1.5 rounded-lg transition-colors ${showSettings ? "bg-indigo-100 text-indigo-600" : "text-gray-400 hover:text-gray-700"}`}
