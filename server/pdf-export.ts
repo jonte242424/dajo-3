@@ -494,3 +494,239 @@ function ensureSpace(doc: PDFKit.PDFDocument, y: number, needed: number): number
   }
   return y;
 }
+
+// ─── Setlist PDF Export ────────────────────────────────────────────────────────
+
+export interface SetlistForExport {
+  name: string;
+  description?: string;
+  songs: SongForExport[];
+}
+
+export function generateSetlistPdf(
+  setlist: SetlistForExport,
+  exportStyle: ExportStyle = "ireal"
+): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const buffers: Buffer[] = [];
+    const doc = new PDFDocument({
+      size: "A4",
+      margin: MARGIN,
+      info: {
+        Title: setlist.name,
+        Author: "DAJO",
+        Creator: "DAJO 3.0",
+      },
+    });
+
+    doc.on("data", (chunk: Buffer) => buffers.push(chunk));
+    doc.on("end", () => resolve(Buffer.concat(buffers)));
+    doc.on("error", reject);
+
+    // Spellista-framsida
+    doc.fontSize(32).fillColor(C.black).font("Helvetica-Bold")
+       .text(setlist.name, MARGIN, 100, { width: INNER_W, align: "center" });
+
+    let y = 150;
+    if (setlist.description) {
+      doc.fontSize(11).fillColor(C.darkGray).font("Helvetica-Oblique")
+         .text(setlist.description, MARGIN, y, { width: INNER_W, align: "center" });
+      y += 40;
+    }
+
+    doc.fontSize(10).fillColor(C.midGray).font("Helvetica")
+       .text(`${setlist.songs.length} låtar`, MARGIN, y, { width: INNER_W, align: "center" });
+
+    // Låt-index
+    y += 60;
+    doc.fontSize(11).fillColor(C.black).font("Helvetica-Bold").text("Innehål:", MARGIN, y);
+    y += 15;
+
+    setlist.songs.forEach((song, idx) => {
+      y = ensureSpace(doc, y, 15);
+      doc.fontSize(10).fillColor(C.darkGray).font("Helvetica")
+         .text(`${idx + 1}. ${song.title}${song.artist ? ` — ${song.artist}` : ""}`, MARGIN + 10, y);
+      y += 12;
+    });
+
+    // Exportera varje låt med sidbrytning
+    setlist.songs.forEach((song, idx) => {
+      doc.addPage();
+
+      // Sidnummer och låtnummer
+      doc.fontSize(8).fillColor(C.lightGray).font("Helvetica")
+         .text(`Låt ${idx + 1} av ${setlist.songs.length}`, MARGIN, MARGIN - 10);
+
+      // Spela upp låtarna med vald stil
+      switch (exportStyle) {
+        case "songbook":
+          renderSongbookSingle(doc, song);
+          break;
+        case "notation":
+          renderNotationSingle(doc, song);
+          break;
+        case "ireal":
+        default:
+          renderIrealSingle(doc, song);
+          break;
+      }
+
+      footer(doc, `${exportStyle} — Spellista: ${setlist.name}`);
+    });
+
+    doc.end();
+  });
+}
+
+/** Render single song for ireal style (used in setlist) */
+function renderIrealSingle(doc: PDFKit.PDFDocument, song: SongForExport) {
+  let y = MARGIN;
+
+  // Title
+  doc.fontSize(20).fillColor(C.black).font("Helvetica-Bold").text(song.title, MARGIN, y);
+  y += 25;
+
+  // Meta-line
+  const metaParts = [song.artist, song.key && `Tonart: ${song.key}`,
+                    song.tempo && `♩${song.tempo}`, song.timeSignature].filter(Boolean);
+  doc.fontSize(9).fillColor(C.midGray).font("Helvetica")
+     .text(metaParts.join(" • "), MARGIN, y);
+  y += 20;
+
+  // Sections
+  song.sections.forEach((section) => {
+    y = ensureSpace(doc, y, 15);
+
+    // Section badge
+    doc.fillColor(C.sectionBg).rect(MARGIN, y, 40, 14).fill();
+    doc.fontSize(9).fillColor(C.sectionFg).font("Helvetica-Bold")
+       .text(section.name, MARGIN + 2, y + 2);
+    y += 20;
+
+    // Bars in rows of 4
+    const barRows: Bar[][] = [];
+    for (let i = 0; i < section.bars.length; i += 4) {
+      barRows.push(section.bars.slice(i, i + 4));
+    }
+
+    barRows.forEach((row) => {
+      y = ensureSpace(doc, y, 40);
+      const boxW = INNER_W / 4;
+
+      row.forEach((bar, idx) => {
+        const x = MARGIN + idx * boxW;
+
+        // Box
+        doc.strokeColor(C.border).lineWidth(0.5)
+           .rect(x, y, boxW, 35).stroke();
+
+        // Chords
+        const chords = bar.chords.sort((a, b) => a.beat - b.beat);
+        const textY = y + 5;
+
+        if (chords.length === 0) {
+          doc.fontSize(10).fillColor(C.lightGray).font("Helvetica")
+             .text("—", x + 3, textY);
+        } else {
+          chords.forEach((chord, ci) => {
+            const { root, quality } = splitChord(chord.symbol);
+            doc.fontSize(12).fillColor(C.black).font("Helvetica-Bold")
+               .text(root, x + 3, textY + ci * 12);
+            if (quality) {
+              doc.fontSize(8).fillColor(C.darkGray).font("Helvetica")
+                 .text(quality, x + 15, textY + ci * 12 + 4);
+            }
+          });
+        }
+      });
+
+      y += 40;
+    });
+
+    y += 5;
+  });
+}
+
+/** Render single song for songbook style (used in setlist) */
+function renderSongbookSingle(doc: PDFKit.PDFDocument, song: SongForExport) {
+  let y = MARGIN;
+
+  doc.fontSize(18).fillColor(C.black).font("Helvetica-Bold").text(song.title, MARGIN, y);
+  y += 20;
+
+  const metaParts = [song.artist, song.key && `Tonart: ${song.key}`,
+                    song.tempo && `Tempo: ${song.tempo}`, song.timeSignature].filter(Boolean);
+  doc.fontSize(8).fillColor(C.midGray).font("Helvetica")
+     .text(metaParts.join(" • "), MARGIN, y);
+  y += 15;
+
+  song.sections.forEach((section) => {
+    y = ensureSpace(doc, y, 12);
+    doc.fontSize(10).fillColor(C.black).font("Helvetica-Bold").text(`[${section.name}]`, MARGIN, y);
+    y += 12;
+
+    section.bars.forEach((bar) => {
+      if (bar.chords.length > 0) {
+        const chordText = bar.chords.map(c => c.symbol).join(" | ");
+        y = ensureSpace(doc, y, 10);
+        doc.fontSize(9).fillColor(C.darkGray).font("Courier").text(chordText, MARGIN + 10, y);
+        y += 10;
+      }
+      if (bar.lyrics) {
+        y = ensureSpace(doc, y, 8);
+        doc.fontSize(8).fillColor(C.black).font("Helvetica").text(bar.lyrics, MARGIN + 10, y);
+        y += 8;
+      }
+    });
+    y += 8;
+  });
+}
+
+/** Render single song for notation style (used in setlist) */
+function renderNotationSingle(doc: PDFKit.PDFDocument, song: SongForExport) {
+  let y = MARGIN;
+
+  doc.fontSize(18).fillColor(C.black).font("Helvetica-Bold").text(song.title, MARGIN, y);
+  y += 20;
+
+  const metaParts = [song.artist, song.key && `Tonart: ${song.key}`,
+                    song.tempo && `♩${song.tempo}`, song.timeSignature].filter(Boolean);
+  doc.fontSize(8).fillColor(C.midGray).font("Helvetica")
+     .text(metaParts.join(" • "), MARGIN, y);
+  y += 20;
+
+  song.sections.forEach((section) => {
+    y = ensureSpace(doc, y, 60);
+
+    // Section label
+    doc.fontSize(9).fillColor(C.darkGray).font("Helvetica-Bold").text(`[${section.name}]`, MARGIN, y - 10);
+
+    const staffY = y;
+    const staffSpacing = 5;
+
+    // Draw 5 staff lines
+    for (let i = 0; i < 5; i++) {
+      const lineY = staffY + i * staffSpacing;
+      doc.strokeColor(C.staffLine).lineWidth(0.5)
+         .moveTo(MARGIN, lineY).lineTo(MARGIN + INNER_W, lineY).stroke();
+    }
+
+    // Bar info
+    let barX = MARGIN;
+    section.bars.forEach((bar, idx) => {
+      if (barX + 30 > MARGIN + INNER_W) {
+        y += 30;
+        barX = MARGIN;
+      }
+
+      // Chord above bar
+      const chordText = bar.chords.map(c => c.symbol).join("/");
+      doc.fontSize(8).fillColor(C.black).font("Helvetica")
+         .text(chordText || "—", barX, staffY - 15, { width: 30, align: "center" });
+
+      barX += 30;
+    });
+
+    y += 50;
+  });
+}

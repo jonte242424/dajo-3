@@ -8,7 +8,7 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { db } from "./db.js";
 import { analyzeFile, type MediaType } from "./ai-import.js";
-import { generatePdf, type ExportStyle } from "./pdf-export.js";
+import { generatePdf, generateSetlistPdf, type ExportStyle } from "./pdf-export.js";
 import type { Section } from "../shared/types.js";
 
 dotenv.config({ path: ".env.local" });
@@ -647,6 +647,84 @@ app.get("/api/songs/:id/export", requireAuth, async (req: any, res) => {
   } catch (err: any) {
     console.error("PDF export error:", err);
     res.status(500).json({ error: "Kunde inte generera PDF" });
+  }
+});
+
+// ─── Setlist: Export as PDF ───────────────────────────────────────────────────
+
+app.get("/api/setlists/:id/export", requireAuth, async (req: any, res) => {
+  const id = Number(req.params.id);
+  const style = (req.query.style || "ireal") as ExportStyle;
+
+  if (!["ireal", "songbook", "notation"].includes(style)) {
+    return res.status(400).json({ error: "Ogiltig stil. Välj: ireal, songbook eller notation" });
+  }
+
+  try {
+    // Fetch setlist with songs
+    const setlistResult = await db.query(
+      `SELECT s.id, s.name, s.description, s.user_id, array_agg(
+         json_build_object(
+           'songId', ss.song_id, 'position', ss.position
+         ) ORDER BY ss.position
+       ) as song_positions
+       FROM setlists s
+       LEFT JOIN setlist_songs ss ON ss.setlist_id = s.id
+       WHERE s.id = $1 AND s.user_id = $2
+       GROUP BY s.id, s.name, s.description, s.user_id`,
+      [id, req.user.id]
+    );
+
+    const setlistRow = setlistResult.rows[0];
+    if (!setlistRow) return res.status(404).json({ error: "Spellista hittades inte" });
+
+    // Fetch all songs in setlist
+    const songIds = (setlistRow.song_positions || [])
+      .filter((pos: any) => pos.songId)
+      .map((pos: any) => pos.songId);
+
+    if (songIds.length === 0) {
+      return res.status(400).json({ error: "Spellistan är tom" });
+    }
+
+    const songsResult = await db.query(
+      `SELECT id, title, artist, key, tempo, time_signature, style, notes, sections
+       FROM songs WHERE id = ANY($1::int[])`,
+      [songIds]
+    );
+
+    const songMap = new Map(songsResult.rows.map(s => [s.id, s]));
+    const songs = songIds
+      .map((songId: number) => songMap.get(songId))
+      .filter(Boolean)
+      .map((s: any) => ({
+        title: s.title,
+        artist: s.artist || "",
+        key: s.key || "C",
+        tempo: s.tempo || 120,
+        timeSignature: (s.time_signature as string) || "4/4",
+        style: s.style || "",
+        notes: s.notes || "",
+        sections: s.sections || [],
+      }));
+
+    // Generate setlist PDF
+    const pdfBuffer = await generateSetlistPdf(
+      {
+        name: setlistRow.name,
+        description: setlistRow.description || "",
+        songs,
+      },
+      style
+    );
+
+    const safeName = setlistRow.name.replace(/[^a-zA-Z0-9åäöÅÄÖ\s-]/g, "").trim().replace(/\s+/g, "_");
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${safeName}_${style}.pdf"`);
+    res.send(pdfBuffer);
+  } catch (err: any) {
+    console.error("Setlist PDF export error:", err);
+    res.status(500).json({ error: "Kunde inte generera spellista-PDF" });
   }
 });
 

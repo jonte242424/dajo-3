@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
   ListMusic, Plus, Trash2, ChevronRight, GripVertical,
-  ArrowLeft, Save, X, Music,
+  ArrowLeft, Save, X, Music, Download,
 } from "lucide-react";
 import {
   DndContext,
@@ -148,6 +148,35 @@ function SetlistDetail({ id, onBack }: { id: number; onBack: () => void }) {
     reorderMutation.mutate(reordered.map((s) => s.id));
   }
 
+  async function handleSetlistExport(style: "ireal" | "songbook" | "notation" = "ireal") {
+    try {
+      const token = localStorage.getItem("token") ?? "";
+      const res = await fetch(`/api/setlists/${id}/export?style=${style}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        console.error("Export failed:", data.error);
+        return;
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const safeName = (setlist?.name || "spellista")
+        .replace(/[^a-zA-Z0-9åäöÅÄÖ\s-]/g, "")
+        .trim()
+        .replace(/\s+/g, "_");
+      a.download = `${safeName}_${style}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Export error:", err);
+    }
+  }
+
   const alreadyInList = new Set(songs.map((s) => s.id));
   const available = allSongs.filter((s: any) => !alreadyInList.has(s.id));
 
@@ -172,12 +201,23 @@ function SetlistDetail({ id, onBack }: { id: number; onBack: () => void }) {
           )}
           <p className="text-xs text-gray-400 mt-1">{songs.length} låtar</p>
         </div>
-        <button
-          onClick={() => setShowAddSong(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-medium hover:bg-indigo-700 transition-colors"
-        >
-          <Plus size={15} /> Lägg till låt
-        </button>
+        <div className="flex gap-2">
+          {songs.length > 0 && (
+            <button
+              onClick={() => handleSetlistExport("ireal")}
+              className="flex items-center gap-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-50 transition-colors"
+              title="Exportera spellista som PDF (iReal-stil)"
+            >
+              <Download size={15} /> Exportera
+            </button>
+          )}
+          <button
+            onClick={() => setShowAddSong(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-medium hover:bg-indigo-700 transition-colors"
+          >
+            <Plus size={15} /> Lägg till låt
+          </button>
+        </div>
       </div>
 
       {songs.length === 0 ? (
