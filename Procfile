@@ -1,1 +1,1 @@
-web: npm run build && npm start
+web: PORT=3001 npm run build && npm start
