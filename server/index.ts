@@ -16,7 +16,10 @@ dotenv.config({ path: ".env.local" });
 // ─── Auto-migrate databas vid start ──────────────────────────────────────────
 
 async function runMigrations() {
-  if (!db) return;
+  if (!db) {
+    console.log("⚠ Ingen databaskonfiguration — använder mock-data");
+    return;
+  }
   try {
     const __dirname = path.dirname(fileURLToPath(import.meta.url));
     const schemaPath = path.join(__dirname, "schema.sql");
@@ -28,11 +31,13 @@ async function runMigrations() {
     await db.query(sql);
     console.log("✓ Databas-schema kört (CREATE TABLE IF NOT EXISTS)");
   } catch (err) {
-    console.error("✗ Migrations-fel:", err);
+    console.error("✗ Migrations-fel (icke-kritiskt):", err);
+    console.log("⚠ Fortsätter utan databas - använder mock-data");
   }
 }
 
-runMigrations();
+// Kör migrering asynkront utan att blockera servern
+runMigrations().catch(err => console.error("Migration failed:", err));
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -800,8 +805,19 @@ app.post("/api/import/save", requireAuth, async (req: any, res) => {
 if (isProd) {
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const distPath = path.join(__dirname, "../dist");
+  console.log("📁 Serving React app from:", distPath);
   app.use(express.static(distPath));
-  app.get("*", (_req, res) => res.sendFile(path.join(distPath, "index.html")));
+  // Fallback to index.html for SPA routing
+  app.get("*", (_req, res) => {
+    try {
+      res.sendFile(path.join(distPath, "index.html"));
+    } catch (err) {
+      console.error("Error serving index.html:", err);
+      res.status(500).send("Error loading application");
+    }
+  });
+} else {
+  console.log("⚠ DEV mode - React app must be served from http://localhost:5173");
 }
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
