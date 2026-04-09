@@ -67,9 +67,9 @@ if (isProd) {
 runMigrations().catch(err => console.error("Unexpected migration error:", err));
 
 const app = express();
-// Railway defaults to 8080 if PORT not set, so we need to be explicit
-const PORT = parseInt(process.env.PORT || "3001", 10);
 const isProd = process.env.NODE_ENV === "production";
+// Force port 3001 for production, otherwise use env or default to 3001
+const PORT = isProd ? 3001 : (parseInt(process.env.PORT || "3001", 10));
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-in-prod";
 
 // Verify JWT_SECRET is set for login
