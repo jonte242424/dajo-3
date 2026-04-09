@@ -62,6 +62,11 @@ const PORT = process.env.PORT || 3001;
 const isProd = process.env.NODE_ENV === "production";
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-in-prod";
 
+// Verify JWT_SECRET is set for login
+if (isProd && !process.env.JWT_SECRET) {
+  console.warn("⚠️  JWT_SECRET not set - using default dev secret");
+}
+
 // Database diagnostics
 if (isProd) {
   const dbUrl = process.env.DATABASE_URL;
