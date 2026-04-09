@@ -233,6 +233,18 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
+// ─── Debug: Version ───────────────────────────────────────────────────────────
+
+app.get("/api/debug/version", (req, res) => {
+  res.json({
+    version: "02cdef8",
+    timestamp: new Date().toISOString(),
+    nodeEnv: process.env.NODE_ENV,
+    port: PORT,
+    uptime: Math.floor(process.uptime())
+  });
+});
+
 // ─── Auth: Me ─────────────────────────────────────────────────────────────────
 
 app.get("/api/auth/me", requireAuth, (req: any, res) => {
