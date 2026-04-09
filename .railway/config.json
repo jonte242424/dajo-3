@@ -1,0 +1,27 @@
+{
+  "$schema": "https://railway.app/schema/v1",
+  "services": {
+    "api": {
+      "startCommand": "npm run build && npm start",
+      "restartPolicyMaxRetries": 5,
+      "variables": {
+        "NODE_ENV": "production",
+        "PORT": 3001
+      },
+      "build": {
+        "builder": "nixpacks"
+      }
+    },
+    "audio": {
+      "rootDirectory": "chord-api",
+      "startCommand": "python app.py",
+      "variables": {
+        "PYTHON_VERSION": "3.11",
+        "PORT": 5002
+      },
+      "build": {
+        "builder": "nixpacks"
+      }
+    }
+  }
+}

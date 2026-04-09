@@ -9,6 +9,8 @@
     "dev:client": "vite",
     "dev:server": "tsx watch server/index.ts",
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:audio": "bash chord-api/start.sh",
+    "dev:all": "concurrently \"npm run dev:server\" \"npm run dev:client\" \"npm run dev:audio\"",
     "build": "vite build",
     "start": "tsx server/index.ts"
   },

@@ -279,6 +279,41 @@ export default function ImportDialog({ onClose }: Props) {
                 <span className="ml-auto text-xs text-gray-300">{tokens.toLocaleString()} tokens</span>
               </div>
 
+              {/* Attribution for audio files */}
+              {file?.type.startsWith("audio/") && (
+                <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                  <div className="flex items-start gap-2">
+                    <Volume2 size={16} className="text-emerald-600 shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-emerald-900 mb-1">
+                        Ackorddetektering från ljud
+                      </p>
+                      <p className="text-xs text-emerald-700 mb-2">
+                        Använder <a
+                          href="https://github.com/ptnghia-j/ChordMiniApp"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-semibold hover:underline"
+                        >
+                          ChordMiniApp
+                        </a> för ackordanalys (MIT licensed)
+                      </p>
+                      {detectionSignals && detectionSignals.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {detectionSignals.map((signal, i) => (
+                            signal && !signal.includes("warning:") && (
+                              <span key={i} className="inline-block text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded">
+                                {signal.replace("audio-detected: ", "🎵 ").replace("tempo: ", "♩ ").replace(" bpm", "")}
+                              </span>
+                            )
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Format-detektion + väljare */}
               <div className="mb-4 rounded-xl border border-gray-200 p-3 bg-gray-50">
                 <p className="text-xs font-medium text-gray-500 mb-2">

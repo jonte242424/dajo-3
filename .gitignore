@@ -11,3 +11,10 @@ npm-debug.log*
 !*.config.js
 !tailwind.config.js
 !postcss.config.js
+
+# Python / Flask
+chord-api/venv/
+chord-api/__pycache__/
+chord-api/*.pyc
+chord-api/.pytest_cache/
+/tmp/dajo_audio/

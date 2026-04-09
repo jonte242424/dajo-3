@@ -63,47 +63,113 @@ export function normalizeMusicFonts(text: string): string {
     .replace(/♯/g, "#");
 }
 
-// ─── Audio file handler (placeholder for MVP) ─────────────────────────────────
+// ─── Audio file handler with ChordMiniApp integration ────────────────────────
 
-async function analyzeAudioFile(filename: string): Promise<AnalyzeResult> {
-  // For MVP, audio analysis is limited:
-  // - Extract title from filename
-  // - Ask user for chord input via UI
-  // - Basic structure guessing
-
+async function analyzeAudioFile(
+  base64Data: string,
+  mediaType: MediaType,
+  filename: string
+): Promise<AnalyzeResult> {
   const title = filename
     .replace(/\.(mp3|wav|ogg|m4a)$/i, "")
     .replace(/[_-]/g, " ")
     .trim();
 
-  // Return a basic structure for audio files
-  // User will need to manually input the chords
-  const emptySong: ImportedSong = {
-    title: title || "Okänd låt",
-    artist: "",
-    key: "C",
-    tempo: 120,
-    timeSignature: "4/4",
-    style: "",
-    preferredFormat: "songbook",
-    sections: [
-      {
-        id: crypto.randomUUID(),
-        name: "Vers",
-        type: "bars",
-        bars: Array.from({ length: 8 }, () => ({ chords: [], lyrics: "" })),
-      },
-    ],
-  };
+  try {
+    // Convert base64 back to buffer for Flask upload
+    const audioBuffer = Buffer.from(base64Data, "base64");
 
-  return {
-    songs: [emptySong],
-    tokensUsed: 0,
-    model: "manual-audio (requires chord input)",
-    detectedFormat: "songbook",
-    detectionConfidence: 0,
-    detectionSignals: ["audio-file: manual-input-required"],
-  };
+    // Call Flask chord detection API
+    console.log(`[Import] Calling Flask chord detection API for ${filename}...`);
+    const flaskResponse = await fetch("http://localhost:5002/detect_chords", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "X-Filename": filename,
+      },
+      body: audioBuffer,
+    });
+
+    if (!flaskResponse.ok) {
+      throw new Error(`Flask API error: ${flaskResponse.status} ${flaskResponse.statusText}`);
+    }
+
+    const chordData = await flaskResponse.json();
+    console.log(`[Import] Flask response:`, chordData);
+
+    // Extract chord information from response
+    const detectedChord = chordData.detected_chord || "C";
+    const tempo = chordData.metadata?.tempo || 120;
+    const duration = chordData.metadata?.duration || 0;
+
+    // Build song structure with detected chord
+    const song: ImportedSong = {
+      title: title || "Okänd låt",
+      artist: "",
+      key: detectedChord.replace(/maj\d?|m|dim|sus|add|b\d|#\d/g, "").trim() || "C",
+      tempo: Math.round(tempo),
+      timeSignature: "4/4",
+      style: "",
+      preferredFormat: "songbook",
+      sections: [
+        {
+          id: crypto.randomUUID(),
+          name: "Vers",
+          type: "bars",
+          // Create 8 bars with the detected chord
+          bars: Array.from({ length: 8 }, () => ({
+            chords: [{ root: detectedChord, beat: 0 }],
+            lyrics: "",
+          })),
+        },
+      ],
+    };
+
+    return {
+      songs: [song],
+      tokensUsed: 0,
+      model: `ChordMiniApp (${chordData.status}) + librosa`,
+      detectedFormat: "songbook",
+      detectionConfidence: 0.7, // Moderate confidence for auto-detected chords
+      detectionSignals: [
+        `audio-detected: ${detectedChord}`,
+        `tempo: ${Math.round(tempo)} bpm`,
+        `duration: ${duration.toFixed(1)}s`,
+        `attribution: ChordMiniApp (https://github.com/ptnghia-j/ChordMiniApp)`,
+        chordData.status === "MVP" ? "note: MVP uses chroma-based detection" : "",
+      ].filter(Boolean),
+    };
+  } catch (err) {
+    console.error("[Import] Chord detection failed:", err);
+
+    // Fallback: return empty structure without chord detection
+    const fallbackSong: ImportedSong = {
+      title: title || "Okänd låt",
+      artist: "",
+      key: "C",
+      tempo: 120,
+      timeSignature: "4/4",
+      style: "",
+      preferredFormat: "songbook",
+      sections: [
+        {
+          id: crypto.randomUUID(),
+          name: "Vers",
+          type: "bars",
+          bars: Array.from({ length: 8 }, () => ({ chords: [], lyrics: "" })),
+        },
+      ],
+    };
+
+    return {
+      songs: [fallbackSong],
+      tokensUsed: 0,
+      model: "manual-audio (chord detection unavailable)",
+      detectedFormat: "songbook",
+      detectionConfidence: 0,
+      detectionSignals: [`audio-file: chord-detection-failed (${err instanceof Error ? err.message : "unknown error"})`],
+    };
+  }
 }
 
 // ─── Huvud-analysfunktion ─────────────────────────────────────────────────────
@@ -118,10 +184,10 @@ export async function analyzeFile(
     throw new Error("ANTHROPIC_API_KEY saknas — lägg till den i miljövariablerna");
   }
 
-  // Handle audio files separately
+  // Handle audio files separately with Flask chord detection
   if (mediaType.startsWith("audio/")) {
     console.log(`[Import] Audioformat: ${mediaType} — ${filename}`);
-    return analyzeAudioFile(filename);
+    return analyzeAudioFile(base64Data, mediaType, filename);
   }
 
   const normalizedText = extractedText ? normalizeMusicFonts(extractedText) : "";
