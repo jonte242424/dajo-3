@@ -238,8 +238,12 @@ app.post("/api/auth/login", (req, res) => {
       user: { id: 1, email, name: "Demo User" }
     });
   } catch (err) {
-    console.error("❌ LOGIN ERROR:", err);
-    return res.status(500).json({ error: "Serverfel" });
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("❌ LOGIN ERROR:", msg);
+    return res.status(500).json({
+      error: "Serverfel",
+      debug: msg
+    });
   }
 });
 
