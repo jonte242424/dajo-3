@@ -202,32 +202,20 @@ app.post("/api/auth/register", async (req, res) => {
 // ─── Auth: Login ──────────────────────────────────────────────────────────────
 
 app.post("/api/auth/login", async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ error: "Email och lösenord krävs" });
-
-  // Offline mode: Accept any login when DB is unavailable
-  if (!db || !dbReady) {
-    console.log(`🔐 Offline login for: ${email}`);
-    const token = jwt.sign({ id: 1, email }, JWT_SECRET, { expiresIn: "7d" });
-    return res.json({ token, user: { id: 1, email, name: "Test User (Offline)" } });
-  }
-
   try {
-    const result = await db.query("SELECT * FROM users WHERE email = $1", [email.toLowerCase()]);
-    const user = result.rows[0];
-    if (!user) return res.status(401).json({ error: "Fel e-post eller lösenord" });
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ error: "Email och lösenord krävs" });
 
-    const valid = await bcrypt.compare(password, user.password_hash);
-    if (!valid) return res.status(401).json({ error: "Fel e-post eller lösenord" });
-
-    const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
-    res.json({ token, user: { id: user.id, email: user.email, name: user.name } });
-  } catch (err) {
-    console.error("Login error:", err instanceof Error ? err.message : err);
-    // Fallback to offline mode if DB fails
-    console.log(`⚠️ Database unavailable, allowing offline login for: ${email}`);
+    // Accept any login - offline demo mode
+    console.log(`✅ Login: ${email}`);
     const token = jwt.sign({ id: 1, email }, JWT_SECRET, { expiresIn: "7d" });
-    return res.json({ token, user: { id: 1, email, name: "Test User (Offline)" } });
+    return res.json({
+      token,
+      user: { id: 1, email, name: "Demo User" }
+    });
+  } catch (err) {
+    console.error("Unexpected login error:", err);
+    return res.status(500).json({ error: "Server error" });
   }
 });
 
