@@ -217,7 +217,7 @@ export default function ImportDialog({ onClose }: Props) {
               >
                 <Upload size={32} className={`mx-auto mb-3 transition-colors ${dragOver ? "text-indigo-500" : "text-gray-300"}`} />
                 <p className="font-medium text-gray-700 mb-1">Dra hit eller klicka för att välja fil</p>
-                <p className="text-sm text-gray-400">PDF, PNG, JPEG, WebP, MP3, WAV — upp till 30MB</p>
+                <p className="text-sm text-gray-400">PDF, PNG, JPEG, WebP, MP3, WAV — upp till 100MB</p>
                 <p className="text-xs text-indigo-400 mt-3">
                   Claude AI analyserar noter, ackordscheman, inspelningar och kompskisser
                 </p>
