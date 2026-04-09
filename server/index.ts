@@ -209,18 +209,27 @@ app.post("/api/auth/register", async (req, res) => {
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ error: "Email och lösenord krävs" });
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email och lösenord krävs" });
+    }
 
-    // Accept any login - offline demo mode
-    console.log(`✅ Login: ${email}`);
-    const token = jwt.sign({ id: 1, email }, JWT_SECRET, { expiresIn: "7d" });
+    console.log(`✅ Login attempt: ${email}`);
+
+    // Demo mode - accept any credentials and return JWT
+    const token = jwt.sign(
+      { id: 1, email },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    console.log(`✅ Login successful: ${email}`);
     return res.json({
       token,
       user: { id: 1, email, name: "Demo User" }
     });
   } catch (err) {
-    console.error("Unexpected login error:", err);
-    return res.status(500).json({ error: "Server error" });
+    console.error("❌ Login error:", err instanceof Error ? err.message : String(err));
+    return res.status(500).json({ error: "Serverfel" });
   }
 });
 
