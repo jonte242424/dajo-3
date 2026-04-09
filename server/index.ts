@@ -212,26 +212,33 @@ app.post("/api/auth/register", async (req, res) => {
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
+    console.log(`📝 Login request: ${JSON.stringify({ email, hasPassword: !!password })}`);
+
     if (!email || !password) {
+      console.log("❌ Missing email or password");
       return res.status(400).json({ error: "Email och lösenord krävs" });
     }
 
     console.log(`✅ Login attempt: ${email}`);
+    console.log(`🔑 JWT_SECRET exists: ${!!JWT_SECRET}, length: ${JWT_SECRET?.length || 0}`);
 
     // Demo mode - accept any credentials and return JWT
-    const token = jwt.sign(
-      { id: 1, email },
-      JWT_SECRET,
-      { expiresIn: "7d" }
-    );
+    const payload = { id: 1, email };
+    console.log(`📦 Creating token with payload:`, payload);
 
-    console.log(`✅ Login successful: ${email}`);
+    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: "7d" });
+    console.log(`✅ Token created successfully`);
+
     return res.json({
       token,
       user: { id: 1, email, name: "Demo User" }
     });
   } catch (err) {
-    console.error("❌ Login error:", err instanceof Error ? err.message : String(err));
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    const errorStack = err instanceof Error ? err.stack : "";
+    console.error("❌ Login error - Message:", errorMsg);
+    console.error("❌ Login error - Stack:", errorStack);
+    console.error("❌ Full error object:", err);
     return res.status(500).json({ error: "Serverfel" });
   }
 });
