@@ -15,34 +15,63 @@ dotenv.config({ path: ".env.local" });
 
 // ─── Auto-migrate databas vid start ──────────────────────────────────────────
 
+let dbReady = false;
+
 async function runMigrations() {
   if (!db) {
-    console.log("⚠ Ingen databaskonfiguration — använder mock-data");
+    console.log("⚠️ Ingen databaskonfiguration — använder mock-data");
+    dbReady = false;
     return;
   }
+
   try {
+    console.log("🔌 Testar databasanslutning...");
+    const result = await Promise.race([
+      db.query("SELECT NOW()"),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Connection timeout")), 5000)
+      )
+    ]);
+
+    console.log("✅ Databaskoppling OK");
+
     const __dirname = path.dirname(fileURLToPath(import.meta.url));
     const schemaPath = path.join(__dirname, "schema.sql");
     if (!fs.existsSync(schemaPath)) {
-      console.log("⚠ schema.sql hittades inte — hoppar över migrering");
+      console.log("⚠️ schema.sql hittades inte — hoppar över migrering");
+      dbReady = true;
       return;
     }
     const sql = fs.readFileSync(schemaPath, "utf8");
     await db.query(sql);
-    console.log("✓ Databas-schema kört (CREATE TABLE IF NOT EXISTS)");
+    console.log("✅ Databas-schema kört");
+    dbReady = true;
   } catch (err) {
-    console.error("✗ Migrations-fel (icke-kritiskt):", err);
-    console.log("⚠ Fortsätter utan databas - använder mock-data");
+    console.error("⚠️ Databaskoppling misslyckades:", err instanceof Error ? err.message : err);
+    console.log("📱 Fortsätter i offline-läge — använder mock-data");
+    dbReady = false;
   }
 }
 
 // Kör migrering asynkront utan att blockera servern
-runMigrations().catch(err => console.error("Migration failed:", err));
+console.log("🚀 Startar DAJO 3.0...");
+runMigrations().catch(err => console.error("Unexpected migration error:", err));
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 const isProd = process.env.NODE_ENV === "production";
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-in-prod";
+
+// Database diagnostics
+if (isProd) {
+  const dbUrl = process.env.DATABASE_URL;
+  console.log(`📊 Database Status:`);
+  console.log(`  - DATABASE_URL set: ${dbUrl ? '✓' : '✗'}`);
+  if (dbUrl) {
+    const masked = dbUrl.replace(/:[^:/@]*@/, ':***@');
+    console.log(`  - Connection string: ${masked}`);
+  }
+}
 
 app.use(cors({
   origin: isProd ? true : "http://localhost:5173",
