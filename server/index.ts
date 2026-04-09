@@ -54,7 +54,7 @@ async function runMigrations() {
 }
 
 // Kör migrering asynkront utan att blockera servern
-console.log("🚀 Startar DAJO 3.0... [v2]");
+console.log("🚀 DAJO 3.0 Production Server Starting - Commit: 0ab739b");
 runMigrations().catch(err => console.error("Unexpected migration error:", err));
 
 const app = express();
