@@ -58,10 +58,17 @@ console.log("🚀 DAJO 3.0 Production Server Starting");
 console.log(`  NODE_ENV: ${process.env.NODE_ENV}`);
 console.log(`  PORT env: ${process.env.PORT}`);
 console.log(`  PORT var: ${PORT}`);
+if (isProd) {
+  console.log("  Environment variables (production):");
+  Object.entries(process.env)
+    .filter(([key]) => key.includes("PORT") || key.includes("RAILWAY") || key.includes("NODE_"))
+    .forEach(([key, val]) => console.log(`    ${key}: ${val?.substring(0, 50)}`));
+}
 runMigrations().catch(err => console.error("Unexpected migration error:", err));
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+// Railway defaults to 8080 if PORT not set, so we need to be explicit
+const PORT = parseInt(process.env.PORT || "3001", 10);
 const isProd = process.env.NODE_ENV === "production";
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-in-prod";
 
