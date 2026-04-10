@@ -59,7 +59,8 @@ runMigrations().catch(err => console.error("Unexpected migration error:", err));
 const app = express();
 const isProd = process.env.NODE_ENV === "production";
 // Force port 3001 for production, otherwise use env or default to 3001
-const PORT = isProd ? 3001 : (parseInt(process.env.PORT || "3001", 10));
+// Use PORT from environment (Render sets it to 10000), fallback to 3001
+const PORT = parseInt(process.env.PORT || "3001", 10);
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-in-prod";
 
 // Debug output after variables are defined
