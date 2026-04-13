@@ -100,6 +100,32 @@ export async function extractIReal(
   filename: string,
   extractedText?: string
 ): Promise<ImportedSong[]> {
+  // If substantial extracted text is available (e.g., from ChordPro files),
+  // use text-only mode
+  if (extractedText && extractedText.length > 100) {
+    const response = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 16000,
+      system: IREAL_SYSTEM,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: IREAL_USER_PROMPT(filename, extractedText),
+            },
+          ],
+        },
+      ],
+    });
+
+    const content = response.content[0];
+    if (content.type !== "text") throw new Error("Oväntat svar från Claude (iReal)");
+    return parseIRealResponse(content.text);
+  }
+
+  // Otherwise, use document/image mode
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 16000,

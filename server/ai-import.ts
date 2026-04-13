@@ -23,7 +23,10 @@ export type MediaType =
   | "audio/mpeg"
   | "audio/wav"
   | "audio/ogg"
-  | "audio/mp4";
+  | "audio/mp4"
+  | "text/plain"
+  | "text/x-chordpro"
+  | "application/x-chordpro";
 
 export interface ImportedSong {
   title: string;
@@ -190,7 +193,22 @@ export async function analyzeFile(
     return analyzeAudioFile(base64Data, mediaType, filename);
   }
 
-  const normalizedText = extractedText ? normalizeMusicFonts(extractedText) : "";
+  // Handle ChordPro and text files - decode base64 directly to text
+  let normalizedText = extractedText ? normalizeMusicFonts(extractedText) : "";
+  let isTextFile = false;
+
+  if (!extractedText && (mediaType === "text/plain" || mediaType === "text/x-chordpro" || mediaType === "application/x-chordpro")) {
+    // For text files (including .pro), decode base64 directly
+    try {
+      const decoded = Buffer.from(base64Data, "base64").toString("utf-8");
+      normalizedText = normalizeMusicFonts(decoded);
+      extractedText = decoded; // Pass decoded text to extraction functions
+      isTextFile = true;
+      console.log(`[Import] ChordPro/text fil: ${filename} (${normalizedText.length} chars)`);
+    } catch (err) {
+      console.error("[Import] Kunde inte avkoda textfil:", err);
+    }
+  }
 
   // ── Steg 1: Snabb textbaserad föranalys ──────────────────────────────────
 
@@ -231,16 +249,16 @@ export async function analyzeFile(
   try {
     switch (format) {
       case "songbook":
-        songs = await extractSongbook(base64Data, mediaType, filename, normalizedText);
+        songs = await extractSongbook(base64Data, mediaType, filename, extractedText || normalizedText);
         extractionModel = "claude-sonnet-4-6 (songbook)";
         break;
       case "notation":
-        songs = await extractNotation(base64Data, mediaType, filename, normalizedText);
+        songs = await extractNotation(base64Data, mediaType, filename, extractedText || normalizedText);
         extractionModel = "claude-sonnet-4-6 (notation)";
         break;
       case "ireal":
       default:
-        songs = await extractIReal(base64Data, mediaType, filename, normalizedText);
+        songs = await extractIReal(base64Data, mediaType, filename, extractedText || normalizedText);
         extractionModel = "claude-sonnet-4-6 (ireal)";
         break;
     }

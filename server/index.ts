@@ -808,12 +808,18 @@ app.post("/api/import/analyze", requireAuth, async (req: any, res) => {
     return res.status(400).json({ error: "base64, mediaType och filename krävs" });
   }
 
+  // Allowed media types - includes ChordPro text formats
   const allowed: MediaType[] = [
     "application/pdf",
     "image/jpeg", "image/png", "image/gif", "image/webp",
     "audio/mpeg", "audio/wav", "audio/ogg", "audio/mp4",
+    "text/plain", "text/x-chordpro", "application/x-chordpro",
   ];
-  if (!allowed.includes(mediaType)) {
+  // Also check file extension for .pro files (often come as text/plain)
+  const ext = filename.split('.').pop()?.toLowerCase();
+  const isProFile = ['pro', 'cho', 'chopro', 'chordpro'].includes(ext || '');
+
+  if (!allowed.includes(mediaType) && !isProFile) {
     return res.status(400).json({ error: `Filtypen stöds inte: ${mediaType}` });
   }
 

@@ -94,6 +94,32 @@ export async function extractSongbook(
   filename: string,
   extractedText?: string
 ): Promise<ImportedSong[]> {
+  // If substantial extracted text is available (e.g., from ChordPro files),
+  // use text-only mode instead of trying to send as document/image
+  if (extractedText && extractedText.length > 100) {
+    const response = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 16000,
+      system: SONGBOOK_SYSTEM,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: SONGBOOK_USER_PROMPT(filename, extractedText),
+            },
+          ],
+        },
+      ],
+    });
+
+    const content = response.content[0];
+    if (content.type !== "text") throw new Error("Oväntat svar från Claude (Songbook)");
+    return parseSongbookResponse(content.text);
+  }
+
+  // Otherwise, use document/image mode
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 16000,

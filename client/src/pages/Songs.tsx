@@ -25,6 +25,7 @@ export default function Songs() {
   const [artist, setArtist] = useState("");
   const [key, setKey] = useState("C");
   const [style, setStyle] = useState("");
+  const [preferredFormat, setPreferredFormat] = useState<"ireal" | "songbook" | "notation">("ireal");
   const [search, setSearch] = useState("");
 
   const { data: songs = [], isLoading } = useQuery({
@@ -45,13 +46,13 @@ export default function Songs() {
           tempo: 120,
           timeSignature: "4/4",
           sections: DEFAULT_SECTIONS,
-          preferredFormat: "ireal",
+          preferredFormat,
         }),
       }),
     onSuccess: (song) => {
       queryClient.invalidateQueries({ queryKey: ["songs"] });
       setShowNew(false);
-      setTitle(""); setArtist(""); setKey("C"); setStyle("");
+      setTitle(""); setArtist(""); setKey("C"); setStyle(""); setPreferredFormat("ireal");
       setLocation(`/editor/${song.id}`);
     },
   });
@@ -147,6 +148,12 @@ export default function Songs() {
                 <input placeholder="Stil (Jazz, Pop…)" value={style} onChange={(e) => setStyle(e.target.value)}
                   className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
               </div>
+              <select value={preferredFormat} onChange={(e) => setPreferredFormat(e.target.value as "ireal" | "songbook" | "notation")}
+                className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                <option value="ireal">iReal Grid</option>
+                <option value="songbook">Songbook</option>
+                <option value="notation">Notation</option>
+              </select>
               <div className="flex gap-2 pt-1">
                 <button
                   onClick={() => createSong.mutate()}

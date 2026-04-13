@@ -42,8 +42,9 @@ const ACCEPTED = [
   "application/pdf",
   "image/jpeg", "image/png", "image/webp", "image/gif",
   "audio/mpeg", "audio/wav", "audio/ogg", "audio/mp4",
+  "text/plain", "text/x-chordpro", "application/x-chordpro",
 ];
-const ACCEPTED_EXT = ".pdf,.jpg,.jpeg,.png,.webp,.gif,.mp3,.wav,.ogg,.m4a";
+const ACCEPTED_EXT = ".pdf,.jpg,.jpeg,.png,.webp,.gif,.mp3,.wav,.ogg,.m4a,.pro,.cho,.chopro";
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -82,8 +83,12 @@ export default function ImportDialog({ onClose }: Props) {
   const [, setLocation] = useLocation();
 
   const processFile = useCallback(async (f: File) => {
-    if (!ACCEPTED.includes(f.type)) {
-      setError(`Filtypen stöds inte. Använd PDF, PNG, JPEG eller WebP.`);
+    // Check file extension for .pro files
+    const ext = f.name.split('.').pop()?.toLowerCase();
+    const isProFile = ['pro', 'cho', 'chopro', 'chordpro'].includes(ext || '');
+
+    if (!ACCEPTED.includes(f.type) && !isProFile) {
+      setError(`Filtypen stöds inte. Använd PDF, PNG, JPEG, WebP, ChordPro (.pro) eller audio.`);
       setStep("error");
       return;
     }
@@ -217,7 +222,7 @@ export default function ImportDialog({ onClose }: Props) {
               >
                 <Upload size={32} className={`mx-auto mb-3 transition-colors ${dragOver ? "text-indigo-500" : "text-gray-300"}`} />
                 <p className="font-medium text-gray-700 mb-1">Dra hit eller klicka för att välja fil</p>
-                <p className="text-sm text-gray-400">PDF, PNG, JPEG, WebP, MP3, WAV — upp till 100MB</p>
+                <p className="text-sm text-gray-400">PDF, PNG, JPEG, WebP, ChordPro (.pro), MP3, WAV — upp till 100MB</p>
                 <p className="text-xs text-indigo-400 mt-3">
                   Claude AI analyserar noter, ackordscheman, inspelningar och kompskisser
                 </p>

@@ -11,6 +11,8 @@ import { useUndoRedo } from "../hooks/useUndoRedo";
 import ChordInput from "../components/ChordInput";
 import { ExportDialog } from "../components/ExportDialog";
 import { ChordPlayerButton, AudioSettings } from "../components/ChordPlayer";
+import SongbookEditor from "../components/SongbookEditor";
+import NotationEditor from "../components/NotationEditor";
 import type { Song, Section, Bar, ChordEntry } from "../../shared/types";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -321,6 +323,7 @@ export default function Editor() {
   const [tempo, setTempo] = useState(120);
   const [timeSignature, setTimeSignature] = useState("4/4");
   const [style, setStyle] = useState("");
+  const [preferredFormat, setPreferredFormat] = useState<"ireal" | "songbook" | "notation">("ireal");
   const { state: sections, setState: setSections, undo, redo, canUndo, canRedo } = useUndoRedo<Section[]>([]);
   const [notes, setNotes] = useState("");
   const [activeBarKey, setActiveBarKey] = useState<string | null>(null);
@@ -347,6 +350,7 @@ export default function Editor() {
       setTempo(song.tempo || 120);
       setTimeSignature((song.timeSignature as string) || "4/4");
       setStyle(song.style || "");
+      setPreferredFormat(((song as any).preferredFormat || "ireal") as "ireal" | "songbook" | "notation");
       setSections(
         Array.isArray(song.sections) && song.sections.length > 0
           ? song.sections
@@ -390,7 +394,7 @@ export default function Editor() {
     mutationFn: () =>
       apiFetch(`/api/songs/${id}`, {
         method: "PUT",
-        body: JSON.stringify({ title, artist, key, tempo, timeSignature, style, sections, notes, preferredFormat: "ireal" }),
+        body: JSON.stringify({ title, artist, key, tempo, timeSignature, style, sections, notes, preferredFormat }),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["songs"] });
@@ -579,6 +583,15 @@ export default function Editor() {
               </select>
             </div>
             <div>
+              <label className="text-xs text-gray-400 uppercase tracking-wide block mb-1">Format</label>
+              <select value={preferredFormat} onChange={(e) => setPreferredFormat(e.target.value as "ireal" | "songbook" | "notation")}
+                className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                <option value="ireal">iReal Grid</option>
+                <option value="songbook">Songbook</option>
+                <option value="notation">Notation</option>
+              </select>
+            </div>
+            <div>
               <label className="text-xs text-gray-400 uppercase tracking-wide block mb-1">Transponera</label>
               <div className="flex items-center gap-2">
                 <button onClick={() => transposeMutation.mutate(-1)}
@@ -630,36 +643,60 @@ export default function Editor() {
       {/* Main content */}
       <div className="max-w-4xl mx-auto px-4 py-6" onClick={(e) => e.stopPropagation()}>
 
-        {/* Sections */}
-        {sections.map((section, idx) => (
-          <SectionBlock
-            key={section.id}
-            section={section}
-            activeBarKey={activeBarKey}
-            setActiveBarKey={setActiveBarKey}
-            onChange={(s) => updateSection(idx, s)}
-            onDelete={() => deleteSection(idx)}
-            onMoveUp={() => moveSection(idx, -1)}
-            onMoveDown={() => moveSection(idx, 1)}
-            isFirst={idx === 0}
-            isLast={idx === sections.length - 1}
-          />
-        ))}
+        {/* Editor based on format */}
+        {preferredFormat === "ireal" && (
+          <>
+            {/* iReal Grid - Sections */}
+            {sections.map((section, idx) => (
+              <SectionBlock
+                key={section.id}
+                section={section}
+                activeBarKey={activeBarKey}
+                setActiveBarKey={setActiveBarKey}
+                onChange={(s) => updateSection(idx, s)}
+                onDelete={() => deleteSection(idx)}
+                onMoveUp={() => moveSection(idx, -1)}
+                onMoveDown={() => moveSection(idx, 1)}
+                isFirst={idx === 0}
+                isLast={idx === sections.length - 1}
+              />
+            ))}
 
-        {/* Add section */}
-        <div className="flex flex-wrap gap-2 mt-2">
-          <span className="text-xs text-gray-400 self-center">Lägg till sektion:</span>
-          {SECTION_NAMES.map((name) => (
-            <button
-              key={name}
-              onClick={() => addSection(name)}
-              className="px-3 py-1 text-xs border border-dashed border-gray-300 rounded-lg
-                         text-gray-500 hover:border-indigo-400 hover:text-indigo-600 transition-colors"
-            >
-              + {name}
-            </button>
-          ))}
-        </div>
+            {/* Add section */}
+            <div className="flex flex-wrap gap-2 mt-2">
+              <span className="text-xs text-gray-400 self-center">Lägg till sektion:</span>
+              {SECTION_NAMES.map((name) => (
+                <button
+                  key={name}
+                  onClick={() => addSection(name)}
+                  className="px-3 py-1 text-xs border border-dashed border-gray-300 rounded-lg
+                             text-gray-500 hover:border-indigo-400 hover:text-indigo-600 transition-colors"
+                >
+                  + {name}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        {preferredFormat === "songbook" && (
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <SongbookEditor
+              sections={sections}
+              onChange={(newSections) => setSections(newSections)}
+            />
+          </div>
+        )}
+
+        {preferredFormat === "notation" && (
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <NotationEditor
+              sections={sections}
+              onChange={(newSections) => setSections(newSections)}
+              timeSignature={timeSignature}
+            />
+          </div>
+        )}
 
         {/* Notes */}
         <div className="mt-6">

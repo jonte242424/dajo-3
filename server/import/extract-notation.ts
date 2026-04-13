@@ -122,7 +122,32 @@ export async function extractNotation(
   filename: string,
   extractedText?: string
 ): Promise<ImportedSong[]> {
-  // Notation är komplex — använd Opus för bästa noggrannhet
+  // If substantial extracted text is available (e.g., from ChordPro files),
+  // use text-only mode
+  if (extractedText && extractedText.length > 100) {
+    const response = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 16000,
+      system: NOTATION_SYSTEM,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: NOTATION_USER_PROMPT(filename, extractedText),
+            },
+          ],
+        },
+      ],
+    });
+
+    const content = response.content[0];
+    if (content.type !== "text") throw new Error("Oväntat svar från Claude (Notation)");
+    return parseNotationResponse(content.text);
+  }
+
+  // Otherwise, use document/image mode
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 16000,
