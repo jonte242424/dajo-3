@@ -10,11 +10,11 @@ import { useLocation } from "wouter";
 import {
   Upload, X, FileText, Image, Loader2,
   CheckCircle2, AlertCircle, Music, ChevronRight,
-  Grid3x3, BookOpen, Music2, Volume2,
+  Grid3x3, BookOpen, Music2, Volume2, Mic, Clock,
 } from "lucide-react";
 import { apiFetch } from "../lib/api";
 
-type Step = "idle" | "uploading" | "analyzing" | "preview" | "saving" | "done" | "error";
+type Step = "idle" | "uploading" | "audio-confirm" | "analyzing" | "preview" | "saving" | "done" | "error";
 type Format = "ireal" | "songbook" | "notation";
 
 interface ImportedSong {
@@ -78,29 +78,20 @@ export default function ImportDialog({ onClose }: Props) {
   const [detectionConfidence, setDetectionConfidence] = useState(0);
   const [detectionSignals, setDetectionSignals] = useState<string[]>([]);
   const [overrideFormat, setOverrideFormat] = useState<Format | null>(null);
+  const [fileBase64, setFileBase64] = useState<string>("");
+  const [fileMediaType, setFileMediaType] = useState<string>("");
+  const [transcribeLyrics, setTranscribeLyrics] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
 
-  const processFile = useCallback(async (f: File) => {
-    // Check file extension for .pro files
-    const ext = f.name.split('.').pop()?.toLowerCase();
-    const isProFile = ['pro', 'cho', 'chopro', 'chordpro'].includes(ext || '');
-
-    if (!ACCEPTED.includes(f.type) && !isProFile) {
-      setError(`Filtypen stöds inte. Använd PDF, PNG, JPEG, WebP, ChordPro (.pro) eller audio.`);
-      setStep("error");
-      return;
-    }
-
-    setFile(f);
-    setError("");
-    setStep("uploading");
-
+  const runAnalysis = useCallback(async (
+    f: File,
+    base64: string,
+    opts: { transcribeLyrics: boolean }
+  ) => {
+    setStep("analyzing");
     try {
-      const base64 = await fileToBase64(f);
-      setStep("analyzing");
-
       const result = await apiFetch<{
         songs: ImportedSong[];
         tokensUsed: number;
@@ -116,6 +107,7 @@ export default function ImportDialog({ onClose }: Props) {
             base64,
             mediaType: f.type,
             filename: f.name,
+            transcribeLyrics: opts.transcribeLyrics,
           }),
         }
       );
@@ -134,6 +126,41 @@ export default function ImportDialog({ onClose }: Props) {
       setStep("error");
     }
   }, []);
+
+  const processFile = useCallback(async (f: File) => {
+    // Check file extension for .pro files
+    const ext = f.name.split('.').pop()?.toLowerCase();
+    const isProFile = ['pro', 'cho', 'chopro', 'chordpro'].includes(ext || '');
+
+    if (!ACCEPTED.includes(f.type) && !isProFile) {
+      setError(`Filtypen stöds inte. Använd PDF, PNG, JPEG, WebP, ChordPro (.pro) eller audio.`);
+      setStep("error");
+      return;
+    }
+
+    setFile(f);
+    setError("");
+    setStep("uploading");
+
+    try {
+      const base64 = await fileToBase64(f);
+      setFileBase64(base64);
+      setFileMediaType(f.type);
+
+      // For audio files, pause and ask about lyrics transcription before starting analysis.
+      // For PDFs/images/ChordPro, go straight to analysis.
+      if (f.type.startsWith("audio/")) {
+        setTranscribeLyrics(false);
+        setStep("audio-confirm");
+        return;
+      }
+
+      await runAnalysis(f, base64, { transcribeLyrics: false });
+    } catch (err: any) {
+      setError(err.message || "Analysen misslyckades");
+      setStep("error");
+    }
+  }, [runAnalysis]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -165,9 +192,15 @@ export default function ImportDialog({ onClose }: Props) {
 
     setStep("saving");
     try {
+      // Include original file data for side-by-side view in editor
+      const isImageOrPdf = !file?.type.startsWith("audio/");
       const result = await apiFetch<{ saved: { id: number; title: string }[] }>(
         "/api/import/save",
-        { method: "POST", body: JSON.stringify({ songs: toSave }) }
+        { method: "POST", body: JSON.stringify({
+          songs: toSave,
+          originalFileData: isImageOrPdf ? fileBase64 : undefined,
+          originalFileType: isImageOrPdf ? fileMediaType : undefined,
+        }) }
       );
 
       await queryClient.invalidateQueries({ queryKey: ["songs"] });
@@ -188,20 +221,20 @@ export default function ImportDialog({ onClose }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 backdrop-blur-sm p-4"
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden"
+        className="bg-white rounded-3xl shadow-lift border border-cream2 w-full max-w-lg overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-cream2">
           <div className="flex items-center gap-2">
-            <Music size={18} className="text-indigo-500" />
-            <h2 className="font-semibold text-gray-800">Importera med AI</h2>
+            <Music size={18} className="text-amber-600" />
+            <h2 className="font-display font-bold text-ink">Importera med AI</h2>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
+          <button onClick={onClose} className="text-ink-faint hover:text-ink-soft transition-colors p-1.5 rounded-lg hover:bg-cream2">
             <X size={18} />
           </button>
         </div>
@@ -215,15 +248,15 @@ export default function ImportDialog({ onClose }: Props) {
                 onDragLeave={() => setDragOver(false)}
                 onDrop={handleDrop}
                 onClick={() => fileRef.current?.click()}
-                className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-all
+                className={`border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all
                   ${dragOver
-                    ? "border-indigo-400 bg-indigo-50"
-                    : "border-gray-200 hover:border-indigo-300 hover:bg-gray-50"}`}
+                    ? "border-amber-400 bg-amber-50"
+                    : "border-cream2 hover:border-amber-300 hover:bg-cream"}`}
               >
-                <Upload size={32} className={`mx-auto mb-3 transition-colors ${dragOver ? "text-indigo-500" : "text-gray-300"}`} />
-                <p className="font-medium text-gray-700 mb-1">Dra hit eller klicka för att välja fil</p>
-                <p className="text-sm text-gray-400">PDF, PNG, JPEG, WebP, ChordPro (.pro), MP3, WAV — upp till 100MB</p>
-                <p className="text-xs text-indigo-400 mt-3">
+                <Upload size={32} className={`mx-auto mb-3 transition-colors ${dragOver ? "text-amber-500" : "text-ink-faint"}`} />
+                <p className="font-display font-bold text-ink mb-1">Dra hit eller klicka för att välja fil</p>
+                <p className="text-sm text-ink-soft">PDF, PNG, JPEG, WebP, ChordPro (.pro), MP3, WAV — upp till 100MB</p>
+                <p className="text-xs text-amber-700 mt-3">
                   Claude AI analyserar noter, ackordscheman, inspelningar och kompskisser
                 </p>
                 <input
@@ -247,8 +280,79 @@ export default function ImportDialog({ onClose }: Props) {
           {/* UPLOADING */}
           {step === "uploading" && (
             <div className="text-center py-10">
-              <Loader2 size={36} className="mx-auto mb-4 text-indigo-400 animate-spin" />
+              <Loader2 size={36} className="mx-auto mb-4 text-steel-400 animate-spin" />
               <p className="font-medium text-gray-700">Laddar upp {file?.name}…</p>
+            </div>
+          )}
+
+          {/* AUDIO CONFIRM — gate before heavy analysis so user can opt into lyrics */}
+          {step === "audio-confirm" && file && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                <Volume2 size={20} className="text-emerald-600 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium text-sm text-gray-900 truncate">{file.name}</p>
+                  <p className="text-xs text-gray-500">
+                    {(file.size / 1024 / 1024).toFixed(1)} MB · ljudfil
+                  </p>
+                </div>
+              </div>
+
+              <label
+                className={`block rounded-xl border p-3 cursor-pointer transition-colors
+                  ${transcribeLyrics
+                    ? "border-emerald-400 bg-emerald-50"
+                    : "border-gray-200 hover:border-emerald-300"}`}
+              >
+                <div className="flex items-start gap-3">
+                  <div className={`mt-0.5 w-5 h-5 shrink-0 rounded border-2 flex items-center justify-center transition-colors
+                    ${transcribeLyrics ? "border-emerald-500 bg-emerald-500" : "border-gray-300"}`}>
+                    {transcribeLyrics && <CheckCircle2 size={12} className="text-white" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <Mic size={14} className="text-emerald-600" />
+                      <span className="font-medium text-sm text-gray-800">
+                        Filen innehåller sångtext
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500 mb-2">
+                      Isolerar rösten (Demucs) och transkriberar med Whisper. Texten placeras
+                      automatiskt under rätt takt.
+                    </p>
+                    {transcribeLyrics && (
+                      <p className="flex items-center gap-1 text-xs text-amber-700">
+                        <Clock size={11} />
+                        Tar längre tid — räkna med ca 1–2 minuter istället för 10 sek
+                      </p>
+                    )}
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="sr-only"
+                    checked={transcribeLyrics}
+                    onChange={(e) => setTranscribeLyrics(e.target.checked)}
+                  />
+                </div>
+              </label>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => runAnalysis(file, fileBase64, { transcribeLyrics })}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-emerald-600
+                             text-white text-sm rounded-xl hover:bg-emerald-700
+                             transition-colors font-medium"
+                >
+                  Starta analys
+                  <ChevronRight size={16} />
+                </button>
+                <button
+                  onClick={() => { setStep("idle"); setFile(null); setFileBase64(""); }}
+                  className="px-4 text-sm text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  Avbryt
+                </button>
+              </div>
             </div>
           )}
 
@@ -256,16 +360,40 @@ export default function ImportDialog({ onClose }: Props) {
           {step === "analyzing" && (
             <div className="text-center py-10">
               <div className="relative mx-auto mb-4 w-12 h-12">
-                <Loader2 size={48} className="text-indigo-400 animate-spin" />
-                <Music size={20} className="absolute inset-0 m-auto text-indigo-600" />
+                <Loader2 size={48} className={`${file?.type.startsWith("audio/") ? "text-emerald-400" : "text-steel-400"} animate-spin`} />
+                {file?.type.startsWith("audio/") ? (
+                  <Volume2 size={20} className="absolute inset-0 m-auto text-emerald-600" />
+                ) : (
+                  <Music size={20} className="absolute inset-0 m-auto text-steel-600" />
+                )}
               </div>
-              <p className="font-medium text-gray-700 mb-2">Claude analyserar filen…</p>
-              <p className="text-sm text-gray-400">Identifierar ackord, sektioner och struktur</p>
+              {file?.type.startsWith("audio/") ? (
+                <>
+                  <p className="font-medium text-gray-700 mb-2">
+                    {transcribeLyrics ? "Analyserar ljud + sångtext…" : "Analyserar ljud…"}
+                  </p>
+                  <p className="text-sm text-gray-400">
+                    {transcribeLyrics
+                      ? "Ackord, tempo, tonart + isolerar röst och transkriberar text"
+                      : "Detekterar tempo, tonart och ackordprogression"}
+                  </p>
+                  <p className="text-xs text-gray-300 mt-2">
+                    {transcribeLyrics
+                      ? "Demucs + Whisper medium · ~1–2 min"
+                      : "Beat-synkronisering · template-matchning · tar ~10-30 sek"}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="font-medium text-gray-700 mb-2">Claude analyserar filen…</p>
+                  <p className="text-sm text-gray-400">Identifierar ackord, sektioner och struktur</p>
+                </>
+              )}
               <div className="mt-4 flex justify-center gap-1">
                 {[0, 1, 2].map((i) => (
                   <div
                     key={i}
-                    className="w-2 h-2 rounded-full bg-indigo-300 animate-bounce"
+                    className={`w-2 h-2 rounded-full animate-bounce ${file?.type.startsWith("audio/") ? "bg-emerald-300" : "bg-steel-300"}`}
                     style={{ animationDelay: `${i * 0.15}s` }}
                   />
                 ))}
@@ -285,39 +413,66 @@ export default function ImportDialog({ onClose }: Props) {
               </div>
 
               {/* Attribution for audio files */}
-              {file?.type.startsWith("audio/") && (
-                <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-                  <div className="flex items-start gap-2">
-                    <Volume2 size={16} className="text-emerald-600 shrink-0 mt-0.5" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold text-emerald-900 mb-1">
-                        Ackorddetektering från ljud
-                      </p>
-                      <p className="text-xs text-emerald-700 mb-2">
-                        Använder <a
-                          href="https://github.com/ptnghia-j/ChordMiniApp"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="font-semibold hover:underline"
-                        >
-                          ChordMiniApp
-                        </a> för ackordanalys (MIT licensed)
-                      </p>
-                      {detectionSignals && detectionSignals.length > 0 && (
-                        <div className="flex flex-wrap gap-1">
-                          {detectionSignals.map((signal, i) => (
-                            signal && !signal.includes("warning:") && (
-                              <span key={i} className="inline-block text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded">
-                                {signal.replace("audio-detected: ", "🎵 ").replace("tempo: ", "♩ ").replace(" bpm", "")}
-                              </span>
-                            )
-                          ))}
-                        </div>
-                      )}
+              {file?.type.startsWith("audio/") && (() => {
+                const hasWarning = detectionSignals?.some(s => s.startsWith("warning:"));
+                return (
+                  <div className={`mb-4 rounded-xl border p-3 ${hasWarning ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
+                    <div className="flex items-start gap-2">
+                      <Volume2 size={16} className={`shrink-0 mt-0.5 ${hasWarning ? "text-amber-600" : "text-emerald-600"}`} />
+                      <div className="flex-1 min-w-0">
+                        {hasWarning ? (
+                          <>
+                            <p className="text-xs font-semibold text-amber-900 mb-1">
+                              Ackorddetektering ej tillgänglig
+                            </p>
+                            {detectionSignals
+                              .filter(s => s.startsWith("warning:") || s.startsWith("lösning:") || s.includes("manuellt"))
+                              .map((s, i) => (
+                                <p key={i} className="text-xs text-amber-800 mb-0.5">
+                                  {s.replace(/^(warning|lösning):\s*/, "")}
+                                </p>
+                              ))}
+                          </>
+                        ) : (
+                          <>
+                            <p className="text-xs font-semibold text-emerald-900 mb-1">
+                              Ackorddetektering från ljud
+                            </p>
+                            <p className="text-xs text-emerald-700 mb-2">
+                              Använder <a
+                                href="https://github.com/ptnghia-j/ChordMiniApp"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="font-semibold hover:underline"
+                              >
+                                ChordMiniApp
+                              </a> för ackordanalys (MIT licensed)
+                            </p>
+                            {detectionSignals && detectionSignals.length > 0 && (
+                              <div className="flex flex-wrap gap-1">
+                                {detectionSignals
+                                  .filter(s => !s.startsWith("warning:") && !s.startsWith("attribution:"))
+                                  .map((signal, i) => (
+                                    <span key={i} className="inline-block text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded">
+                                      {signal
+                                        .replace("audio-detected: ", "🎵 ")
+                                        .replace("unique chords: ", "🎹 ")
+                                        .replace("key: ", "🔑 ")
+                                        .replace("tempo: ", "♩ ")
+                                        .replace("duration: ", "⏱ ")
+                                        .replace("bars: ", "🎼 ")
+                                        .replace(" bpm", "")}
+                                    </span>
+                                  ))}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               {/* Format-detektion + väljare */}
               <div className="mb-4 rounded-xl border border-gray-200 p-3 bg-gray-50">
@@ -336,7 +491,7 @@ export default function ImportDialog({ onClose }: Props) {
                       onClick={() => setOverrideFormat(fmt === detectedFormat ? null : fmt)}
                       className={`flex-1 flex flex-col items-center gap-1 p-2 rounded-lg border text-xs transition-all
                         ${activeFormat === fmt
-                          ? "border-indigo-400 bg-indigo-50 text-indigo-700 font-medium"
+                          ? "border-steel-400 bg-steel-50 text-steel-700 font-medium"
                           : "border-gray-200 text-gray-500 hover:border-gray-300"}`}
                     >
                       {info.icon}
@@ -359,11 +514,11 @@ export default function ImportDialog({ onClose }: Props) {
                     onClick={() => toggleSelect(i)}
                     className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all
                       ${selected.has(i)
-                        ? "border-indigo-300 bg-indigo-50"
+                        ? "border-steel-300 bg-steel-50"
                         : "border-gray-200 hover:border-gray-300"}`}
                   >
                     <div className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors
-                      ${selected.has(i) ? "border-indigo-500 bg-indigo-500" : "border-gray-300"}`}>
+                      ${selected.has(i) ? "border-steel-500 bg-steel-500" : "border-gray-300"}`}>
                       {selected.has(i) && <CheckCircle2 size={12} className="text-white" />}
                     </div>
                     <div className="min-w-0 flex-1">
@@ -382,8 +537,8 @@ export default function ImportDialog({ onClose }: Props) {
                 <button
                   onClick={saveSelected}
                   disabled={selected.size === 0}
-                  className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-indigo-600
-                             text-white text-sm rounded-xl hover:bg-indigo-700
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-steel-600
+                             text-white text-sm rounded-xl hover:bg-steel-700
                              disabled:opacity-40 transition-colors font-medium"
                 >
                   Importera {selected.size > 0 ? `(${selected.size})` : ""}
@@ -402,7 +557,7 @@ export default function ImportDialog({ onClose }: Props) {
           {/* SAVING */}
           {step === "saving" && (
             <div className="text-center py-10">
-              <Loader2 size={36} className="mx-auto mb-4 text-indigo-400 animate-spin" />
+              <Loader2 size={36} className="mx-auto mb-4 text-steel-400 animate-spin" />
               <p className="font-medium text-gray-700">Sparar låtar…</p>
             </div>
           )}

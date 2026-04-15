@@ -6,7 +6,7 @@
  * Steg 3: extract-*.ts       — Format-specifik extraktion (optimerad prompt)
  */
 
-import type { Section, TimeSignature } from "../shared/types.js";
+import type { Section, TimeSignature, ChordEntry } from "../shared/types.js";
 import type { PreferredFormat } from "../shared/types.js";
 import { detectFormat } from "./import/detect-format.js";
 import { classifyFormat } from "./import/classify-format.js";
@@ -68,10 +68,198 @@ export function normalizeMusicFonts(text: string): string {
 
 // ─── Audio file handler with ChordMiniApp integration ────────────────────────
 
+const FLASK_API_URL = process.env.FLASK_API_URL || "http://localhost:5002";
+
+interface ChordSegment {
+  chord: string;
+  start_time: number;
+  end_time: number;
+  beat_index: number;
+}
+
+interface ChordDetectionResponse {
+  success: boolean;
+  progression: ChordSegment[];
+  key: string;
+  mode: "major" | "minor";
+  tempo: number;
+  duration: number;
+  beat_count: number;
+  chord_count: number;
+  metadata: Record<string, unknown>;
+  attribution: Record<string, string>;
+}
+
+interface LyricsWord {
+  start: number;
+  end: number;
+  text: string;
+}
+
+interface LyricsSegment {
+  start: number;
+  end: number;
+  text: string;
+  words: LyricsWord[];
+}
+
+interface LyricsResponse {
+  success: boolean;
+  segments: LyricsSegment[];
+  language: string;
+  language_probability: number;
+  duration: number;
+  segment_count: number;
+  word_count: number;
+  method: string;
+  attribution: Record<string, string>;
+}
+
+async function transcribeLyrics(
+  audioBuffer: Buffer,
+  filename: string,
+  language = "sv"
+): Promise<LyricsResponse | null> {
+  try {
+    const t0 = Date.now();
+    console.log(`[Import] Calling lyrics transcription for ${filename} (lang=${language})...`);
+    const res = await fetch(
+      `${FLASK_API_URL}/transcribe_lyrics?language=${encodeURIComponent(language)}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "X-Filename": filename,
+        },
+        body: audioBuffer,
+      }
+    );
+    if (res.status === 501) {
+      console.log("[Import] Lyrics transcription not available on server — skipping");
+      return null;
+    }
+    if (!res.ok) {
+      console.warn(`[Import] Lyrics transcription failed: ${res.status} ${res.statusText}`);
+      return null;
+    }
+    const data = (await res.json()) as LyricsResponse;
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+    console.log(
+      `[Import] Lyrics complete in ${elapsed}s: ${data.segment_count} segments, ${data.word_count} words (${data.language} ${(data.language_probability * 100).toFixed(0)}%)`
+    );
+    return data;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[Import] Lyrics transcription error: ${msg} — continuing without lyrics`);
+    return null;
+  }
+}
+
+/**
+ * Build bars from a time-based chord progression.
+ *
+ * Each bar represents (beats_per_bar) beats. We walk the progression and for each bar
+ * collect the chords whose time range overlaps with the bar's time range. Up to 2 chords
+ * per bar (beats 1 and 3 in 4/4).
+ *
+ * If `lyrics` is provided, words whose start time falls in a bar's range are concatenated
+ * into that bar's `lyrics` field (space-separated).
+ */
+function buildBarsFromProgression(
+  progression: ChordSegment[],
+  tempo: number,
+  beatsPerBar: number,
+  duration: number,
+  lyrics?: LyricsSegment[] | null
+): { chords: ChordEntry[]; lyrics: string }[] {
+  if (progression.length === 0) return [];
+
+  const secondsPerBeat = 60.0 / tempo;
+  const secondsPerBar = secondsPerBeat * beatsPerBar;
+  const barCount = Math.max(1, Math.ceil(duration / secondsPerBar));
+
+  // Flatten all words with their timestamps (fallback to segment text if no words)
+  const allWords: { start: number; text: string }[] = [];
+  if (lyrics && lyrics.length > 0) {
+    for (const seg of lyrics) {
+      if (seg.words && seg.words.length > 0) {
+        for (const w of seg.words) {
+          if (w.text) allWords.push({ start: w.start, text: w.text });
+        }
+      } else if (seg.text) {
+        // Segment has no word-level timestamps — distribute text across segment range
+        allWords.push({ start: seg.start, text: seg.text });
+      }
+    }
+  }
+
+  const bars: { chords: ChordEntry[]; lyrics: string }[] = [];
+
+  for (let b = 0; b < barCount; b++) {
+    const barStart = b * secondsPerBar;
+    const barEnd = barStart + secondsPerBar;
+    const halfPoint = barStart + secondsPerBar / 2;
+
+    // Find chord active at bar start and at half point
+    const chordAt = (t: number): string | null => {
+      for (const seg of progression) {
+        if (t >= seg.start_time && t < seg.end_time && seg.chord !== "N") {
+          return seg.chord;
+        }
+      }
+      return null;
+    };
+
+    const firstChord = chordAt(barStart + 0.01);
+    const secondChord = chordAt(halfPoint);
+
+    const chords: ChordEntry[] = [];
+    if (firstChord) chords.push({ symbol: firstChord, beat: 1 });
+    if (secondChord && secondChord !== firstChord) {
+      // For 4/4 this yields beat 3; cast because beat type is 1|2|3|4
+      const midBeat = (Math.ceil(beatsPerBar / 2) + 1) as 1 | 2 | 3 | 4;
+      chords.push({ symbol: secondChord, beat: midBeat });
+    }
+
+    // Collect words whose start falls in this bar
+    const barWords = allWords
+      .filter((w) => w.start >= barStart && w.start < barEnd)
+      .map((w) => w.text);
+    const barLyrics = barWords.join(" ").replace(/\s+/g, " ").trim();
+
+    bars.push({ chords, lyrics: barLyrics });
+  }
+
+  return bars;
+}
+
+/**
+ * Split bars into sections by detecting long runs of identical chord patterns.
+ * For MVP: group into 8-bar sections.
+ */
+function splitIntoSections(
+  bars: { chords: ChordEntry[]; lyrics: string }[]
+): { name: string; bars: typeof bars }[] {
+  if (bars.length === 0) return [];
+
+  const SECTION_SIZE = 8;
+  const sections: { name: string; bars: typeof bars }[] = [];
+  const sectionNames = ["A", "B", "C", "D", "E", "F", "G", "H"];
+
+  for (let i = 0; i < bars.length; i += SECTION_SIZE) {
+    const slice = bars.slice(i, i + SECTION_SIZE);
+    const name = sectionNames[Math.floor(i / SECTION_SIZE)] ?? `Sektion ${Math.floor(i / SECTION_SIZE) + 1}`;
+    sections.push({ name, bars: slice });
+  }
+
+  return sections;
+}
+
 async function analyzeAudioFile(
   base64Data: string,
   mediaType: MediaType,
-  filename: string
+  filename: string,
+  opts: { transcribeLyrics: boolean } = { transcribeLyrics: false }
 ): Promise<AnalyzeResult> {
   const title = filename
     .replace(/\.(mp3|wav|ogg|m4a)$/i, "")
@@ -79,12 +267,15 @@ async function analyzeAudioFile(
     .trim();
 
   try {
-    // Convert base64 back to buffer for Flask upload
     const audioBuffer = Buffer.from(base64Data, "base64");
 
-    // Call Flask chord detection API
-    console.log(`[Import] Calling Flask chord detection API for ${filename}...`);
-    const flaskResponse = await fetch("http://localhost:5002/detect_chords", {
+    console.log(
+      `[Import] Audio analysis start for ${filename} (${audioBuffer.length} bytes) — chords${opts.transcribeLyrics ? " + lyrics in parallel" : " only"}`
+    );
+    const t0 = Date.now();
+
+    // Always run chord detection. Lyrics only if user opted in — it's slow (Demucs + Whisper).
+    const chordPromise = fetch(`${FLASK_API_URL}/detect_chords`, {
       method: "POST",
       headers: {
         "Content-Type": "application/octet-stream",
@@ -92,60 +283,102 @@ async function analyzeAudioFile(
       },
       body: audioBuffer,
     });
+    const lyricsPromise = opts.transcribeLyrics
+      ? transcribeLyrics(audioBuffer, filename, "sv")
+      : Promise.resolve(null);
 
-    if (!flaskResponse.ok) {
-      throw new Error(`Flask API error: ${flaskResponse.status} ${flaskResponse.statusText}`);
+    const [chordRes, lyricsRes] = await Promise.all([chordPromise, lyricsPromise]);
+
+    if (!chordRes.ok) {
+      throw new Error(`Flask /detect_chords error: ${chordRes.status} ${chordRes.statusText}`);
     }
 
-    const chordData = await flaskResponse.json();
-    console.log(`[Import] Flask response:`, chordData);
+    const data = (await chordRes.json()) as ChordDetectionResponse;
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+    console.log(
+      `[Import] Audio analysis complete in ${elapsed}s: ${data.chord_count} chords, key ${data.key}, tempo ${data.tempo.toFixed(0)} bpm, lyrics: ${lyricsRes ? lyricsRes.word_count + " words" : "none"}`
+    );
 
-    // Extract chord information from response
-    const detectedChord = chordData.detected_chord || "C";
-    const tempo = chordData.metadata?.tempo || 120;
-    const duration = chordData.metadata?.duration || 0;
+    const hasLyrics = !!(lyricsRes && lyricsRes.word_count > 0);
 
-    // Build song structure with detected chord
+    // Build bar structure — pass lyrics so words land in the right bars
+    const bars = buildBarsFromProgression(
+      data.progression,
+      data.tempo,
+      4,
+      data.duration,
+      lyricsRes?.segments ?? null
+    );
+    const sections = splitIntoSections(bars).map((s) => ({
+      id: crypto.randomUUID(),
+      name: s.name,
+      type: "bars" as const,
+      bars: s.bars,
+    }));
+
+    // If no bars built (e.g. silent audio), create a fallback
+    if (sections.length === 0) {
+      sections.push({
+        id: crypto.randomUUID(),
+        name: "A",
+        type: "bars" as const,
+        bars: Array.from({ length: 8 }, () => ({ chords: [], lyrics: "" })),
+      });
+    }
+
+    // When lyrics are present, songbook is the more useful editor (chords + text).
+    const preferredFormat: PreferredFormat = hasLyrics ? "songbook" : "ireal";
+
     const song: ImportedSong = {
       title: title || "Okänd låt",
       artist: "",
-      key: detectedChord.replace(/maj\d?|m|dim|sus|add|b\d|#\d/g, "").trim() || "C",
-      tempo: Math.round(tempo),
+      key: data.key || "C",
+      tempo: Math.round(data.tempo),
       timeSignature: "4/4",
       style: "",
-      preferredFormat: "songbook",
-      sections: [
-        {
-          id: crypto.randomUUID(),
-          name: "Vers",
-          type: "bars",
-          // Create 8 bars with the detected chord
-          bars: Array.from({ length: 8 }, () => ({
-            chords: [{ root: detectedChord, beat: 0 }],
-            lyrics: "",
-          })),
-        },
-      ],
+      preferredFormat,
+      sections,
     };
+
+    const uniqueChords = new Set(data.progression.map((s) => s.chord).filter((c) => c !== "N"));
+
+    const signals = [
+      `audio-detected: ${data.chord_count} chord segments`,
+      `unique chords: ${uniqueChords.size}`,
+      `key: ${data.key} ${data.mode}`,
+      `tempo: ${Math.round(data.tempo)} bpm`,
+      `duration: ${data.duration.toFixed(1)}s`,
+      `bars: ${bars.length}`,
+    ];
+    if (hasLyrics) {
+      signals.push(
+        `lyrics: ${lyricsRes!.word_count} words in ${lyricsRes!.segment_count} segments (${lyricsRes!.language})`
+      );
+      signals.push(
+        `separation: Demucs htdemucs + ${lyricsRes!.method.includes("medium") ? "Whisper medium" : "Whisper"}`
+      );
+    } else {
+      signals.push(`lyrics: not transcribed (service unavailable or no vocals)`);
+    }
+    signals.push(`attribution: ChordMiniApp + Demucs + faster-whisper (MIT)`);
+
+    const model = hasLyrics
+      ? `ChordMiniApp v2.0 + Demucs htdemucs + ${lyricsRes!.method.replace("demucs-htdemucs + ", "")}`
+      : `ChordMiniApp v2.0 (librosa template-match)`;
 
     return {
       songs: [song],
       tokensUsed: 0,
-      model: `ChordMiniApp (${chordData.status}) + librosa`,
-      detectedFormat: "songbook",
-      detectionConfidence: 0.7, // Moderate confidence for auto-detected chords
-      detectionSignals: [
-        `audio-detected: ${detectedChord}`,
-        `tempo: ${Math.round(tempo)} bpm`,
-        `duration: ${duration.toFixed(1)}s`,
-        `attribution: ChordMiniApp (https://github.com/ptnghia-j/ChordMiniApp)`,
-        chordData.status === "MVP" ? "note: MVP uses chroma-based detection" : "",
-      ].filter(Boolean),
+      model,
+      detectedFormat: preferredFormat,
+      detectionConfidence: 0.75,
+      detectionSignals: signals,
     };
   } catch (err) {
-    console.error("[Import] Chord detection failed:", err);
+    const errMsg = err instanceof Error ? err.message : "unknown error";
+    const isConnectError = errMsg.includes("fetch failed") || errMsg.includes("ECONNREFUSED");
+    console.error("[Import] Chord detection failed:", errMsg);
 
-    // Fallback: return empty structure without chord detection
     const fallbackSong: ImportedSong = {
       title: title || "Okänd låt",
       artist: "",
@@ -153,11 +386,11 @@ async function analyzeAudioFile(
       tempo: 120,
       timeSignature: "4/4",
       style: "",
-      preferredFormat: "songbook",
+      preferredFormat: "ireal",
       sections: [
         {
           id: crypto.randomUUID(),
-          name: "Vers",
+          name: "A",
           type: "bars",
           bars: Array.from({ length: 8 }, () => ({ chords: [], lyrics: "" })),
         },
@@ -168,9 +401,15 @@ async function analyzeAudioFile(
       songs: [fallbackSong],
       tokensUsed: 0,
       model: "manual-audio (chord detection unavailable)",
-      detectedFormat: "songbook",
+      detectedFormat: "ireal",
       detectionConfidence: 0,
-      detectionSignals: [`audio-file: chord-detection-failed (${err instanceof Error ? err.message : "unknown error"})`],
+      detectionSignals: isConnectError
+        ? [
+            `warning: chord detection service inte igång`,
+            `lösning: kör "cd chord-api && ./start.sh" i terminalen`,
+            `tomt schema skapat — fyll i ackorden manuellt`,
+          ]
+        : [`warning: chord-detection-failed (${errMsg})`],
     };
   }
 }
@@ -181,7 +420,8 @@ export async function analyzeFile(
   base64Data: string,
   mediaType: MediaType,
   filename: string,
-  extractedText?: string
+  extractedText?: string,
+  opts?: { transcribeLyrics: boolean }
 ): Promise<AnalyzeResult> {
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error("ANTHROPIC_API_KEY saknas — lägg till den i miljövariablerna");
@@ -189,8 +429,8 @@ export async function analyzeFile(
 
   // Handle audio files separately with Flask chord detection
   if (mediaType.startsWith("audio/")) {
-    console.log(`[Import] Audioformat: ${mediaType} — ${filename}`);
-    return analyzeAudioFile(base64Data, mediaType, filename);
+    console.log(`[Import] Audioformat: ${mediaType} — ${filename}${opts?.transcribeLyrics ? " (med sångtext)" : ""}`);
+    return analyzeAudioFile(base64Data, mediaType, filename, opts ?? { transcribeLyrics: false });
   }
 
   // Handle ChordPro and text files - decode base64 directly to text

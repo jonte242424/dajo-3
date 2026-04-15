@@ -1,24 +1,61 @@
+/**
+ * DAJO Landing — Klevgrand-inspired warm hand-crafted feel,
+ * anchored to the cartoon logo (steel blue + warm amber + cream).
+ */
 import { Link } from "wouter";
 import { useState } from "react";
 import {
-  Music, Upload, Download, Share2, ListMusic,
-  ChevronDown, ChevronUp, Star, Zap, Shield, Smartphone,
+  Upload, Music2, FileDown, ListMusic, Share2, Smartphone,
+  ChevronDown, ChevronUp, Sparkles, Check, Moon, Play,
 } from "lucide-react";
+import { Logo, DajoCartoon } from "../components/Logo";
 
 // ─── FAQ item ─────────────────────────────────────────────────────────────────
 
 function FaqItem({ q, a }: { q: string; a: string }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="border-b border-gray-200 py-4">
+    <div className="border-b border-cream2 py-5">
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between text-left gap-4"
+        className="w-full flex items-center justify-between text-left gap-4 group"
       >
-        <span className="font-medium text-gray-800">{q}</span>
-        {open ? <ChevronUp size={16} className="text-gray-400 shrink-0" /> : <ChevronDown size={16} className="text-gray-400 shrink-0" />}
+        <span className="font-medium text-ink group-hover:text-steel-600 transition-colors">{q}</span>
+        {open
+          ? <ChevronUp size={18} className="text-ink-soft shrink-0" />
+          : <ChevronDown size={18} className="text-ink-soft shrink-0" />}
       </button>
-      {open && <p className="mt-3 text-gray-600 text-sm leading-relaxed">{a}</p>}
+      {open && <p className="mt-3 text-ink-soft leading-relaxed">{a}</p>}
+    </div>
+  );
+}
+
+// ─── Feature card ─────────────────────────────────────────────────────────────
+
+function Feature({
+  icon, title, desc, accent,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  desc: string;
+  accent: "sage" | "peach" | "rose" | "lavender" | "butter" | "pistachio";
+}) {
+  const bg = {
+    sage: "bg-sage/30",
+    peach: "bg-peach/40",
+    rose: "bg-rose/40",
+    lavender: "bg-lavender/40",
+    butter: "bg-butter/60",
+    pistachio: "bg-pistachio/40",
+  }[accent];
+
+  return (
+    <div className="p-6 rounded-3xl bg-white border border-cream2 hover:shadow-lift transition-all duration-300 hover:-translate-y-0.5">
+      <div className={`w-12 h-12 ${bg} rounded-2xl flex items-center justify-center mb-4`}>
+        {icon}
+      </div>
+      <h3 className="font-display font-bold text-ink mb-2 text-lg">{title}</h3>
+      <p className="text-ink-soft text-sm leading-relaxed">{desc}</p>
     </div>
   );
 }
@@ -27,38 +64,53 @@ function FaqItem({ q, a }: { q: string; a: string }) {
 
 export default function Landing() {
   const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [instrument, setInstrument] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
-  function handlePilot(e: React.FormEvent) {
+  async function handlePilot(e: React.FormEvent) {
     e.preventDefault();
-    // Spara lokalt — i produktion skicka till ett API
-    const signups = JSON.parse(localStorage.getItem("pilot_signups") || "[]");
-    signups.push({ email, ts: new Date().toISOString() });
-    localStorage.setItem("pilot_signups", JSON.stringify(signups));
-    setSubmitted(true);
+    setError("");
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/pilot/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, name, instrument }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Något gick fel");
+      }
+      setSubmitted(true);
+    } catch (err: any) {
+      setError(err.message || "Kunde inte skicka anmälan");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
-    <div className="min-h-screen bg-white text-gray-900 overflow-x-hidden">
+    <div className="min-h-screen bg-cream text-ink overflow-x-hidden font-sans">
 
       {/* ── Navbar ── */}
-      <nav className="fixed top-0 inset-x-0 z-50 bg-white/80 backdrop-blur border-b border-gray-100">
-        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center">
-              <Music size={16} className="text-white" />
-            </div>
-            <span className="font-bold text-lg text-indigo-700">DAJO 3.0</span>
-          </div>
-          <div className="flex items-center gap-3">
-            <a href="#features" className="hidden sm:block text-sm text-gray-500 hover:text-gray-800 transition-colors">
+      <nav className="fixed top-0 inset-x-0 z-50 bg-cream/85 backdrop-blur border-b border-cream2">
+        <div className="max-w-6xl mx-auto px-5 py-3 flex items-center justify-between">
+          <Logo size="md" />
+          <div className="flex items-center gap-5">
+            <a href="#features" className="hidden sm:block text-sm text-ink-soft hover:text-ink transition-colors">
               Funktioner
             </a>
-            <a href="#faq" className="hidden sm:block text-sm text-gray-500 hover:text-gray-800 transition-colors">
+            <a href="#story" className="hidden sm:block text-sm text-ink-soft hover:text-ink transition-colors">
+              Vår historia
+            </a>
+            <a href="#faq" className="hidden sm:block text-sm text-ink-soft hover:text-ink transition-colors">
               FAQ
             </a>
             <Link href="/login">
-              <a className="px-4 py-2 text-sm font-medium text-indigo-600 border border-indigo-300 rounded-lg hover:bg-indigo-50 transition-colors">
+              <a className="px-4 py-2 text-sm font-semibold text-steel-600 border-2 border-steel-200 rounded-xl hover:bg-steel-50 transition-colors">
                 Logga in
               </a>
             </Link>
@@ -67,203 +119,321 @@ export default function Landing() {
       </nav>
 
       {/* ── Hero ── */}
-      <section className="pt-28 pb-20 px-4 bg-gradient-to-br from-indigo-50 via-white to-blue-50">
-        <div className="max-w-3xl mx-auto text-center">
-          <div className="inline-flex items-center gap-2 bg-indigo-100 text-indigo-700 text-xs font-semibold px-3 py-1.5 rounded-full mb-6">
-            <Star size={12} fill="currentColor" /> Professionell app för musiker
-          </div>
-          <h1 className="text-4xl sm:text-6xl font-extrabold tracking-tight text-gray-900 leading-tight">
-            Dina ackordscheman —{" "}
-            <span className="text-indigo-600">äntligen organiserade</span>
-          </h1>
-          <p className="mt-6 text-lg sm:text-xl text-gray-500 max-w-2xl mx-auto leading-relaxed">
-            DAJO är appen som förstår musik. Importera PDF, bild eller notera ackord
-            direkt — och exportera proffsiga scheman på sekunder. Perfekt för jazzare,
-            singers och låtskrivare.
-          </p>
-          <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center">
-            <Link href="/login">
-              <a className="inline-flex items-center justify-center gap-2 px-7 py-3.5 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-200 text-base">
-                <Zap size={18} /> Kom igång gratis
+      <section className="pt-28 pb-20 px-5 bg-sunburst">
+        <div className="max-w-6xl mx-auto grid md:grid-cols-2 gap-12 items-center">
+          {/* Left: copy */}
+          <div className="text-center md:text-left animate-fade-up">
+            <div className="inline-flex items-center gap-2 bg-amber-100 text-amber-800 text-xs font-semibold px-3 py-1.5 rounded-full mb-6 border border-amber-200 shadow-soft">
+              <Sparkles size={12} /> Pilot öppen — välkommen ombord
+            </div>
+            <h1 className="font-display text-5xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight text-ink leading-[1.05]">
+              Din kompis<br />
+              <span className="text-steel-600">på scenen.</span>
+            </h1>
+            <p className="mt-6 text-lg sm:text-xl text-ink-soft max-w-xl leading-relaxed">
+              Kompskisser, setlistor och bandet — på ett ställe.
+              Byggd av musiker som spelar varje vecka,
+              för musiker som vill <em className="text-amber-700 not-italic font-semibold">spela</em> —
+              inte rota efter noterna.
+            </p>
+            <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center md:justify-start">
+              <Link href="/login">
+                <a className="inline-flex items-center justify-center gap-2 px-7 py-3.5 bg-steel-600 text-white font-semibold rounded-2xl hover:bg-steel-700 transition-all hover:shadow-lift hover:-translate-y-0.5 text-base">
+                  Kom igång gratis
+                </a>
+              </Link>
+              <a
+                href="#pilot"
+                className="inline-flex items-center justify-center gap-2 px-7 py-3.5 bg-white border-2 border-cream2 text-ink font-semibold rounded-2xl hover:border-amber-300 hover:bg-amber-50 transition-all text-base"
+              >
+                Bli pilotanvändare
               </a>
-            </Link>
-            <a
-              href="#pilot"
-              className="inline-flex items-center justify-center gap-2 px-7 py-3.5 border border-gray-300 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-colors text-base"
-            >
-              Bli pilotanvändare
-            </a>
+            </div>
+            <p className="mt-4 text-xs text-ink-faint">Gratis under beta · Inget kreditkort · Avregistrera när du vill</p>
+
+            {/* Mini trust strip */}
+            <div className="mt-8 flex flex-wrap gap-x-5 gap-y-2 justify-center md:justify-start text-xs text-ink-faint">
+              <span className="flex items-center gap-1.5"><Check size={12} className="text-pistachio" /> Svenskbyggt</span>
+              <span className="flex items-center gap-1.5"><Check size={12} className="text-pistachio" /> Ingen annonsspårning</span>
+              <span className="flex items-center gap-1.5"><Check size={12} className="text-pistachio" /> Data stannar i EU</span>
+            </div>
           </div>
-          <p className="mt-4 text-xs text-gray-400">Inget kreditkort krävs · Gratis under beta</p>
+
+          {/* Right: cartoon */}
+          <div className="relative animate-fade-up" style={{ animationDelay: "150ms" }}>
+            <DajoCartoon className="max-w-md mx-auto" />
+            {/* Floating chord-card decoration */}
+            <div className="hidden md:block absolute -bottom-6 -left-6 bg-white rounded-2xl shadow-lift p-3 border border-cream2 animate-float-slow">
+              <div className="grid grid-cols-2 gap-1.5 w-32">
+                {["Cmaj7", "Am7", "Dm7", "G7"].map((c) => (
+                  <div key={c} className="bg-cream rounded-lg px-2 py-1.5 text-xs font-bold text-steel-700 text-center">
+                    {c}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="hidden md:block absolute -top-4 -right-4 bg-amber-500 text-white rounded-2xl shadow-sun px-4 py-2 text-sm font-bold animate-float-rev">
+              ♪ Spela direkt
+            </div>
+          </div>
         </div>
 
-        {/* Hero UI preview */}
-        <div className="max-w-4xl mx-auto mt-14">
-          <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden">
-            {/* Fake browser chrome */}
-            <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200">
-              <div className="w-3 h-3 rounded-full bg-red-400" />
-              <div className="w-3 h-3 rounded-full bg-yellow-400" />
-              <div className="w-3 h-3 rounded-full bg-green-400" />
-              <div className="ml-4 flex-1 bg-white rounded-md px-3 py-1 text-xs text-gray-400 border border-gray-200">
+        {/* Editor preview */}
+        <div className="max-w-5xl mx-auto mt-20 animate-fade-up" style={{ animationDelay: "300ms" }}>
+          <div className="bg-white rounded-3xl shadow-lift border border-cream2 overflow-hidden">
+            {/* Browser chrome */}
+            <div className="flex items-center gap-2 px-4 py-3 bg-cream2/60 border-b border-cream2">
+              <div className="w-3 h-3 rounded-full bg-rose" />
+              <div className="w-3 h-3 rounded-full bg-butter" />
+              <div className="w-3 h-3 rounded-full bg-pistachio" />
+              <div className="ml-4 flex-1 bg-cream rounded-lg px-3 py-1 text-xs text-ink-faint">
                 dajo.app/editor/autumn-leaves
               </div>
             </div>
-            {/* Fake editor */}
-            <div className="p-5 bg-gray-50">
-              <div className="flex items-center gap-3 mb-4">
-                <span className="font-bold text-gray-800 text-lg">Autumn Leaves</span>
-                <span className="text-sm text-gray-400">· Joseph Kosma · G · Jazz · ♩120</span>
+            <div className="p-6 bg-cream-fade">
+              <div className="flex items-center gap-3 mb-5 flex-wrap">
+                <span className="font-display font-bold text-ink text-xl">Autumn Leaves</span>
+                <span className="text-sm text-ink-soft">· Joseph Kosma</span>
+                <span className="px-2 py-0.5 bg-steel-100 text-steel-700 rounded text-xs font-semibold">G</span>
+                <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded text-xs font-semibold">Jazz</span>
+                <span className="text-xs text-ink-faint">♩ 120</span>
                 <div className="ml-auto flex gap-2">
-                  <span className="px-3 py-1 border border-gray-200 rounded-lg text-xs text-gray-500 bg-white">Dela</span>
-                  <span className="px-3 py-1 border border-indigo-300 rounded-lg text-xs text-indigo-600 bg-white">Exportera</span>
-                  <span className="px-3 py-1 bg-indigo-600 rounded-lg text-xs text-white">Spara</span>
+                  <span className="px-3 py-1.5 bg-white border border-cream2 rounded-lg text-xs text-ink-soft">Dela</span>
+                  <span className="px-3 py-1.5 bg-amber-500 text-white rounded-lg text-xs font-semibold shadow-soft">Exportera</span>
                 </div>
               </div>
-              {/* Section A */}
-              <div className="mb-3">
-                <div className="flex items-center gap-3 mb-2">
-                  <span className="px-3 py-1 bg-indigo-700 text-white text-xs font-bold rounded-lg">A</span>
-                  <span className="text-xs text-gray-400">4 takter</span>
+              {[
+                { name: "A", bars: [["Am7", "D7"], ["Gmaj7"], ["Cmaj7"], ["F#m7♭5", "B7"]], active: 1 },
+                { name: "B", bars: [["Em7"], ["Em7"], ["Am7", "D7"], ["Gmaj7"]], active: -1 },
+              ].map((sec) => (
+                <div key={sec.name} className="mb-4 last:mb-0">
+                  <div className="flex items-center gap-3 mb-2">
+                    <span className="px-3 py-1 bg-steel-700 text-white text-xs font-bold rounded-lg shadow-soft">{sec.name}</span>
+                    <span className="text-xs text-ink-faint">4 takter</span>
+                    {sec.active >= 0 && (
+                      <span className="flex items-center gap-1 text-xs text-amber-700 ml-1">
+                        <Play size={10} fill="currentColor" /> spelar
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-4 gap-2">
+                    {sec.bars.map((bar, i) => {
+                      const isActive = i === sec.active;
+                      return (
+                        <div
+                          key={i}
+                          className={`rounded-2xl p-3 min-h-[56px] flex items-center justify-center transition-all
+                            ${isActive
+                              ? "bg-amber-50 border-2 border-amber-400 ring-2 ring-amber-200 animate-pulse-glow"
+                              : "bg-white border border-cream2"}`}
+                        >
+                          <span className={`font-bold text-sm text-center ${isActive ? "text-amber-800" : "text-ink"}`}>
+                            {bar.join("  ")}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-                <div className="grid grid-cols-4 gap-2">
-                  {[
-                    ["Am7", "D7"], ["Gmaj7"], ["Cmaj7"], ["F#m7b5", "B7"]
-                  ].map((bar, i) => (
-                    <div key={i} className="bg-white border border-gray-200 rounded-xl p-3 min-h-[52px] flex items-center justify-center">
-                      <span className="font-bold text-gray-800 text-sm text-center">{bar.join("  ")}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              {/* Section B */}
-              <div>
-                <div className="flex items-center gap-3 mb-2">
-                  <span className="px-3 py-1 bg-indigo-700 text-white text-xs font-bold rounded-lg">B</span>
-                  <span className="text-xs text-gray-400">4 takter</span>
-                </div>
-                <div className="grid grid-cols-4 gap-2">
-                  {[["Em7"], ["Em7"], ["Am7", "D7"], ["Gmaj7"]].map((bar, i) => (
-                    <div key={i} className="bg-white border border-gray-200 rounded-xl p-3 min-h-[52px] flex items-center justify-center">
-                      <span className="font-bold text-gray-800 text-sm">{bar.join("  ")}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              ))}
             </div>
           </div>
         </div>
       </section>
 
+      {/* ── Story / Origin ── */}
+      <section id="story" className="py-20 px-5 bg-cream2/40">
+        <div className="max-w-3xl mx-auto text-center">
+          <p className="text-amber-600 font-semibold text-sm uppercase tracking-wider mb-3">Vår historia</p>
+          <h2 className="font-display text-3xl sm:text-4xl font-extrabold text-ink mb-6">
+            Två musiker, en irriterande mapp med PDF:er
+          </h2>
+          <p className="text-ink-soft text-lg leading-relaxed">
+            DAJO började när <strong className="text-ink">David</strong> visade <strong className="text-ink">Jonas</strong> sin "system":
+            en mapp med 200 fotograferade ackordscheman, döpta efter datum,
+            sökta via "kanske var det den från Skogås?". Efter en gigkväll med fel tonart
+            och tre fumlanden mitt i refrängen var det dags. <strong className="text-ink">David</strong> hade idén,{" "}
+            <strong className="text-ink">Jonas</strong> började bygga.
+            Resten är pågående repetition.
+          </p>
+        </div>
+      </section>
+
       {/* ── Features ── */}
-      <section id="features" className="py-20 px-4 bg-white">
-        <div className="max-w-5xl mx-auto">
+      <section id="features" className="py-20 px-5 bg-cream">
+        <div className="max-w-6xl mx-auto">
           <div className="text-center mb-14">
-            <h2 className="text-3xl sm:text-4xl font-extrabold text-gray-900">
-              Allt du behöver. Inget du inte behöver.
+            <p className="text-amber-600 font-semibold text-sm uppercase tracking-wider mb-3">Vad du får</p>
+            <h2 className="font-display text-4xl sm:text-5xl font-extrabold text-ink">
+              Allt du behöver.<br />
+              <span className="text-steel-600">Inget du inte behöver.</span>
             </h2>
-            <p className="mt-3 text-gray-500 text-lg">
-              Byggt av musiker, för musiker.
+            <p className="mt-4 text-ink-soft text-lg max-w-xl mx-auto">
+              Vi byggde det vi själva ville ha. Sen tog vi bort allt som vi insåg
+              att vi egentligen inte använde.
             </p>
           </div>
 
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {[
-              {
-                icon: <Upload size={22} className="text-indigo-600" />,
-                title: "AI-import",
-                desc: "Ladda upp en bild eller PDF av ett ackordschema — Claude AI läser av det och skapar ett redigerbart schema direkt.",
-              },
-              {
-                icon: <Music size={22} className="text-indigo-600" />,
-                title: "Musikteori inbyggd",
-                desc: "Appen förstår tonarter, diatoniska ackord, transponering och Roman numeral-analys via Tonal.js.",
-              },
-              {
-                icon: <Download size={22} className="text-indigo-600" />,
-                title: "PDF-export · 3 stilar",
-                desc: "Exportera som iReal Grid, Songbook eller Notation. Proffsiga PDF:er redo att skriva ut eller dela.",
-              },
-              {
-                icon: <ListMusic size={22} className="text-indigo-600" />,
-                title: "Spellistor",
-                desc: "Sätt ihop spellistor för konserter och repetitioner. Drag-and-drop för att ordna låtarnas ordning.",
-              },
-              {
-                icon: <Share2 size={22} className="text-indigo-600" />,
-                title: "Dela med ett klick",
-                desc: "Gör en låt offentlig och dela en länk med bandmedlemmar eller elever — ingen inloggning krävs för att läsa.",
-              },
-              {
-                icon: <Smartphone size={22} className="text-indigo-600" />,
-                title: "Fungerar på mobilen",
-                desc: "Responsiv design som fungerar lika bra på telefon som på dator — på scen eller i repetitionslokalen.",
-              },
-            ].map((f, i) => (
-              <div key={i} className="p-6 rounded-2xl border border-gray-200 hover:border-indigo-300 hover:shadow-sm transition-all">
-                <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center mb-4">
-                  {f.icon}
-                </div>
-                <h3 className="font-bold text-gray-900 mb-2">{f.title}</h3>
-                <p className="text-gray-500 text-sm leading-relaxed">{f.desc}</p>
-              </div>
-            ))}
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+            <Feature
+              accent="butter"
+              icon={<Upload size={22} className="text-amber-700" />}
+              title="AI-import"
+              desc="Fota ett ackordschema eller dra in en PDF — Claude läser av takter, sektioner och tonart åt dig. Du polerar."
+            />
+            <Feature
+              accent="sage"
+              icon={<Music2 size={22} className="text-steel-700" />}
+              title="Musikteori inbyggd"
+              desc="Transponera halvtonsvis, se diatoniska ackord, känn igen funktionsanalys. Tonal.js i botten."
+            />
+            <Feature
+              accent="peach"
+              icon={<FileDown size={22} className="text-amber-700" />}
+              title="PDF i tre stilar"
+              desc="iReal-grid för fakebooken, Songbook med text och ackord, Notation med riktigt notsystem. Skriv ut eller maila bandet."
+            />
+            <Feature
+              accent="lavender"
+              icon={<ListMusic size={22} className="text-steel-700" />}
+              title="Setlistor som funkar"
+              desc="Drag-and-drop. Försättsblad. Tonart och tempo per låt. En PDF — hela kvällen."
+            />
+            <Feature
+              accent="rose"
+              icon={<Share2 size={22} className="text-steel-700" />}
+              title="Bandspaces"
+              desc="Samla bandet på en plats. Kapellmästaren delar setlisten, alla ser samma sak — i sin egen tonart om de vill."
+            />
+            <Feature
+              accent="pistachio"
+              icon={<Smartphone size={22} className="text-steel-700" />}
+              title="Mobil och iPad"
+              desc="Mörkt scenläge när lampan är släckt. Stora ackord när du står tre meter bort. Inget zoomande mitt i låten."
+            />
           </div>
         </div>
       </section>
 
       {/* ── How it works ── */}
-      <section className="py-20 px-4 bg-indigo-50">
-        <div className="max-w-3xl mx-auto text-center">
-          <h2 className="text-3xl font-extrabold text-gray-900 mb-12">Så enkelt fungerar det</h2>
-          <div className="flex flex-col sm:flex-row gap-8 justify-center items-start">
+      <section className="py-20 px-5 bg-steel-50">
+        <div className="max-w-4xl mx-auto text-center">
+          <p className="text-amber-600 font-semibold text-sm uppercase tracking-wider mb-3">Så funkar det</p>
+          <h2 className="font-display text-4xl font-extrabold text-ink mb-14">
+            Från idé till scen på fem minuter
+          </h2>
+          <div className="grid sm:grid-cols-3 gap-8">
             {[
-              { step: "1", title: "Importera eller skapa", desc: "Ladda upp en PDF, foto eller starta ett tomt schema från grunden." },
-              { step: "2", title: "Redigera & transponera", desc: "Klicka på en takt för att redigera ackord. Transponera hela låten med ett knapptryck." },
-              { step: "3", title: "Exportera & dela", desc: "Ladda ner en proffsig PDF eller dela en länk med ditt band." },
+              { step: "1", title: "Fota eller skriv", desc: "Ladda upp en PDF, fota ett blad, eller börja från noll med tomma takter." },
+              { step: "2", title: "Putsa", desc: "Klicka på en takt, ändra ackord, transponera hela låten med en knapp. Lägg till anteckningar." },
+              { step: "3", title: "Spela", desc: "Mörkt scenläge, stora ackord, swipe mellan låtar. Eller skriv ut. Eller maila bandet. Eller alla tre." },
             ].map((s) => (
-              <div key={s.step} className="flex-1">
-                <div className="w-12 h-12 rounded-2xl bg-indigo-600 text-white text-xl font-extrabold flex items-center justify-center mx-auto mb-4">
+              <div key={s.step} className="bg-white p-6 rounded-3xl shadow-soft border border-cream2">
+                <div className="w-14 h-14 rounded-2xl bg-amber-500 text-white text-2xl font-display font-extrabold flex items-center justify-center mx-auto mb-5 shadow-sun">
                   {s.step}
                 </div>
-                <h3 className="font-bold text-gray-900 mb-2">{s.title}</h3>
-                <p className="text-gray-500 text-sm">{s.desc}</p>
+                <h3 className="font-display font-bold text-ink text-lg mb-2">{s.title}</h3>
+                <p className="text-ink-soft text-sm leading-relaxed">{s.desc}</p>
               </div>
             ))}
           </div>
         </div>
       </section>
 
+      {/* ── Stage mode teaser ── */}
+      <section className="py-20 px-5 bg-stage-fade text-white overflow-hidden relative">
+        <div className="max-w-6xl mx-auto grid md:grid-cols-2 gap-12 items-center">
+          <div>
+            <div className="inline-flex items-center gap-2 bg-amber-500/15 text-amber-300 text-xs font-semibold px-3 py-1.5 rounded-full mb-6 border border-amber-400/20">
+              <Moon size={12} /> Scenläge
+            </div>
+            <h2 className="font-display text-4xl sm:text-5xl font-extrabold mb-5 leading-tight">
+              När lampan är<br />
+              <span className="text-amber-400">släckt.</span>
+            </h2>
+            <p className="text-steel-100 text-lg leading-relaxed mb-6">
+              Stora ackord. Hög kontrast. Autopilot genom låten. Swipe mellan
+              nummer med en fot. iPaden ligger på stativet, du tittar upp på
+              publiken — inte ner i en mapp.
+            </p>
+            <ul className="space-y-3 text-steel-100">
+              {[
+                "Mörk bakgrund med varm orange highlight",
+                "Auto-bläddring synkad till tempot",
+                "Markera aktuell takt stort — syns på 3 meter",
+                "Snabb transponering mellan låtar",
+              ].map((item) => (
+                <li key={item} className="flex items-start gap-2.5">
+                  <Check size={18} className="text-amber-400 shrink-0 mt-0.5" />
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Stage mockup */}
+          <div className="relative">
+            <div className="bg-steel-900 rounded-3xl border border-steel-700 shadow-2xl overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-3 border-b border-steel-800">
+                <span className="text-xs text-steel-300 font-medium">Scenläge · Autumn Leaves</span>
+                <div className="flex items-center gap-2 text-xs text-amber-400">
+                  <Play size={10} fill="currentColor" /> ♩ 120
+                </div>
+              </div>
+              <div className="p-6">
+                <div className="text-center mb-6">
+                  <p className="text-xs text-steel-400 uppercase tracking-widest mb-2">Sektion A · takt 2 / 8</p>
+                </div>
+                <div className="grid grid-cols-4 gap-2">
+                  {[
+                    { c: "Am7  D7", active: false },
+                    { c: "Gmaj7",   active: true  },
+                    { c: "Cmaj7",   active: false },
+                    { c: "F♯m7♭5 B7", active: false },
+                  ].map((bar, i) => (
+                    <div
+                      key={i}
+                      className={`rounded-xl p-4 min-h-[72px] flex items-center justify-center transition-all
+                        ${bar.active
+                          ? "bg-amber-500/20 border-2 border-amber-400 shadow-sun animate-pulse-glow"
+                          : "bg-steel-800/50 border border-steel-700"}`}
+                    >
+                      <span className={`font-display font-bold text-center ${bar.active ? "text-amber-300 text-2xl" : "text-steel-300 text-lg"}`}>
+                        {bar.c}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-6 flex items-center justify-between text-xs text-steel-400">
+                  <span>← Föregående</span>
+                  <span className="text-amber-400 font-semibold">Nästa: Blue Bossa →</span>
+                </div>
+              </div>
+            </div>
+            {/* Floating "pedal ready" hint */}
+            <div className="hidden md:block absolute -bottom-6 -right-6 bg-amber-500 text-steel-900 rounded-2xl shadow-sun px-4 py-2 text-sm font-bold animate-float-slow">
+              🦶 Pedal redo
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* ── FAQ ── */}
-      <section id="faq" className="py-20 px-4 bg-white">
+      <section id="faq" className="py-20 px-5 bg-cream">
         <div className="max-w-2xl mx-auto">
-          <h2 className="text-3xl font-extrabold text-gray-900 mb-10 text-center">Vanliga frågor</h2>
-          <div className="divide-y divide-gray-200">
+          <h2 className="font-display text-4xl font-extrabold text-ink mb-3 text-center">
+            Frågor vi får ofta
+          </h2>
+          <p className="text-center text-ink-soft mb-10">Saknar du något? Hör av dig.</p>
+          <div>
             {[
-              {
-                q: "Är DAJO gratis?",
-                a: "Ja, under betaperioden är DAJO helt gratis att använda. Alla funktioner är tillgängliga utan kostnad.",
-              },
-              {
-                q: "Vilka filformat kan jag importera?",
-                a: "Du kan importera PDF-filer, JPEG, PNG och WebP-bilder. AI:n (Claude från Anthropic) läser av ackordscheman och skapar ett redigerbart schema åt dig.",
-              },
-              {
-                q: "Hur fungerar AI-importen?",
-                a: "Du laddar upp en bild eller PDF av ett ackordschema. Claude Vision analyserar filen och extraherar tonart, tempo, sektioner och ackord automatiskt — du kan sedan redigera resultatet.",
-              },
-              {
-                q: "Kan jag dela mina ackordscheman?",
-                a: "Ja! Med ett knapptryck gör du ett schema offentligt och får en delbar länk. Mottagaren behöver inte ett DAJO-konto för att se schemat.",
-              },
-              {
-                q: "Vilka PDF-stilar kan jag exportera?",
-                a: "Tre stilar: iReal Grid (ackordschema i rutnät), Songbook (ackord ovanför textrader) och Notation (notradsutseende med ackordsymboler).",
-              },
-              {
-                q: "Sparas mina låtar i molnet?",
-                a: "Ja, alla låtar sparas i databasen och är tillgängliga oavsett vilken enhet du loggar in från.",
-              },
+              { q: "Är DAJO gratis?", a: "Ja, under pilotperioden är allt gratis. Vi tar betalt först när det är värt att betala för." },
+              { q: "Vilka filer kan jag importera?", a: "PDF, JPEG, PNG och WebP. Claude Vision läser av ackordscheman, lead sheets och kompskisser och skapar redigerbara takter." },
+              { q: "Hur bra är AI-importen?", a: "Riktigt bra på rena lead sheets, oftast bra på fotograferade scheman, ibland kämpig med handskrivet. Du ser alltid resultatet och rättar det som blivit fel — och appen lär sig av dina rättningar." },
+              { q: "Kan jag dela med bandet?", a: "Ja. Skapa ett bandspace, bjud in via länk, dela låtar och setlistor. Varje medlem kan se i sin egen tonart utan att originalet ändras." },
+              { q: "Vilka exportformat finns?", a: "Tre stilar: iReal-grid (fakebook), Songbook (text + ackord) och Notation (notsystem med ackord). Plus setlist-PDF med försättsblad." },
+              { q: "Var sparas mina låtar?", a: "I vår databas, så de följer med oavsett vilken enhet du loggar in från. Vi backar upp regelbundet och du kan exportera allt när du vill." },
+              { q: "Funkar det offline?", a: "Inte än. Just nu krävs nätverk — men det är på roadmapen för framtiden." },
             ].map((item, i) => (
               <FaqItem key={i} q={item.q} a={item.a} />
             ))}
@@ -272,62 +442,92 @@ export default function Landing() {
       </section>
 
       {/* ── Pilot signup ── */}
-      <section id="pilot" className="py-20 px-4 bg-gradient-to-br from-indigo-600 to-indigo-800">
-        <div className="max-w-xl mx-auto text-center text-white">
-          <div className="inline-flex items-center gap-2 bg-white/20 text-white text-xs font-semibold px-3 py-1.5 rounded-full mb-6">
-            <Shield size={12} /> Begränsade platser
+      <section id="pilot" className="py-20 px-5 bg-steel-fade text-white">
+        <div className="max-w-xl mx-auto text-center">
+          <div className="inline-flex items-center gap-2 bg-white/10 text-butter text-xs font-semibold px-3 py-1.5 rounded-full mb-6 border border-white/20">
+            <Sparkles size={12} /> Begränsade platser
           </div>
-          <h2 className="text-3xl sm:text-4xl font-extrabold mb-4">
+          <h2 className="font-display text-4xl sm:text-5xl font-extrabold mb-4">
             Bli pilotanvändare
           </h2>
-          <p className="text-indigo-200 mb-8 text-lg">
-            Få tidig tillgång, påverka funktioner och hjälp oss bygga den bästa
-            appen för musiker. Vi kontaktar dig när beta öppnar.
+          <p className="text-steel-100 mb-8 text-lg leading-relaxed">
+            Få tidig tillgång. Påverka funktioner. Hjälp oss bygga den bästa appen
+            för spelande musiker. Vi hör av oss när din plats är klar.
           </p>
           {submitted ? (
-            <div className="bg-white/20 rounded-2xl py-6 px-8">
-              <p className="text-xl font-bold mb-2">Tack! 🎵</p>
-              <p className="text-indigo-200 text-sm">
-                Vi hör av oss när piloten öppnar. Välkommen ombord!
+            <div className="bg-white/10 rounded-3xl py-8 px-8 backdrop-blur border border-white/20">
+              <div className="w-14 h-14 rounded-full bg-amber-500 mx-auto mb-4 flex items-center justify-center shadow-sun">
+                <Check size={26} className="text-white" />
+              </div>
+              <p className="text-2xl font-display font-bold mb-2">Tack — vi hör av oss!</p>
+              <p className="text-steel-100">
+                Du står nu på listan. Välkommen ombord, spelkompis. 🎵
               </p>
             </div>
           ) : (
-            <form onSubmit={handlePilot} className="flex flex-col sm:flex-row gap-3">
+            <form onSubmit={handlePilot} className="flex flex-col gap-3 text-left">
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Ditt namn"
+                className="px-4 py-3 rounded-xl text-ink text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400 placeholder:text-ink-faint"
+              />
               <input
                 type="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="din@email.se"
-                className="flex-1 px-4 py-3 rounded-xl text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-white/50 placeholder:text-gray-400"
+                placeholder="din@email.se *"
+                className="px-4 py-3 rounded-xl text-ink text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400 placeholder:text-ink-faint"
               />
+              <input
+                type="text"
+                value={instrument}
+                onChange={(e) => setInstrument(e.target.value)}
+                placeholder="Vad spelar du? (ex. piano, saxofon, kapellmästare)"
+                className="px-4 py-3 rounded-xl text-ink text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400 placeholder:text-ink-faint"
+              />
+              {error && (
+                <div className="bg-rose/30 border border-rose rounded-xl px-4 py-2.5 text-sm text-white">
+                  {error}
+                </div>
+              )}
               <button
                 type="submit"
-                className="px-6 py-3 bg-white text-indigo-700 font-semibold rounded-xl hover:bg-indigo-50 transition-colors whitespace-nowrap text-sm"
+                disabled={submitting || !email}
+                className="mt-1 px-6 py-3.5 bg-amber-500 text-white font-semibold rounded-xl hover:bg-amber-600 transition-colors shadow-sun disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Anmäl mig
+                {submitting ? "Skickar…" : "Anmäl mig till piloten"}
               </button>
             </form>
           )}
-          <p className="mt-4 text-xs text-indigo-300">Vi skickar inga spam — bara relevant information om DAJO.</p>
+          <p className="mt-4 text-xs text-steel-200">
+            Vi mailar bara om DAJO. Inga spam, inga partners.
+          </p>
         </div>
       </section>
 
       {/* ── Footer ── */}
-      <footer className="py-10 px-4 bg-gray-900 text-gray-400">
-        <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded bg-indigo-600 flex items-center justify-center">
-              <Music size={12} className="text-white" />
+      <footer className="py-12 px-5 bg-cream2 text-ink-soft border-t border-cream2/80">
+        <div className="max-w-6xl mx-auto">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-6 mb-8">
+            <Logo size="md" />
+            <div className="flex items-center gap-6 text-sm">
+              <a href="#features" className="hover:text-steel-700 transition-colors">Funktioner</a>
+              <a href="#story" className="hover:text-steel-700 transition-colors">Historia</a>
+              <a href="#faq" className="hover:text-steel-700 transition-colors">FAQ</a>
+              <Link href="/login">
+                <a className="text-steel-600 hover:text-steel-700 font-semibold transition-colors">
+                  Logga in →
+                </a>
+              </Link>
             </div>
-            <span className="text-sm font-semibold text-white">DAJO 3.0</span>
           </div>
-          <p className="text-xs text-gray-500">© {new Date().getFullYear()} DAJO — Music chord charts. Byggd med ♥ för musiker.</p>
-          <Link href="/login">
-            <a className="text-sm text-indigo-400 hover:text-indigo-300 transition-colors">
-              Logga in →
-            </a>
-          </Link>
+          <div className="pt-6 border-t border-cream2/80 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-ink-faint">
+            <p>© {new Date().getFullYear()} DAJO · Combined AB</p>
+            <p>Byggt i Sverige med ♥ för musiker som vill spela.</p>
+          </div>
         </div>
       </footer>
     </div>

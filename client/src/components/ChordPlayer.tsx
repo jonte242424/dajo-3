@@ -112,7 +112,7 @@ export function ChordPlayerButton({ chords, className = "" }: ChordPlayerButtonP
             ? "bg-green-100 text-green-700"
             : loading
             ? "bg-gray-100 text-gray-400 cursor-wait"
-            : "bg-indigo-50 text-indigo-600 hover:bg-indigo-100 active:scale-95"
+            : "bg-steel-50 text-steel-600 hover:bg-steel-100 active:scale-95"
           }`}
       >
         {loading ? (
@@ -155,7 +155,7 @@ export function AudioSettings() {
         max={6}
         value={volume}
         onChange={(e) => handleVolume(Number(e.target.value))}
-        className="w-20 accent-indigo-600"
+        className="w-20 accent-steel-600"
       />
       <span className="text-xs text-gray-400">{volume > 0 ? "+" : ""}{volume} dB</span>
     </div>

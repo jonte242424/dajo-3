@@ -6,6 +6,9 @@ import Songs from "./pages/Songs";
 import Editor from "./pages/Editor";
 import Setlists from "./pages/Setlists";
 import PublicSong from "./pages/PublicSong";
+import Groups from "./pages/Groups";
+import JoinGroup from "./pages/JoinGroup";
+import PilotAdmin from "./pages/PilotAdmin";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -26,6 +29,9 @@ export default function App() {
         <Route path="/songs">{() => <PrivateRoute component={Songs} />}</Route>
         <Route path="/editor/:id">{() => <PrivateRoute component={Editor} />}</Route>
         <Route path="/setlists">{() => <PrivateRoute component={Setlists} />}</Route>
+        <Route path="/groups">{() => <PrivateRoute component={Groups} />}</Route>
+        <Route path="/admin/pilot">{() => <PrivateRoute component={PilotAdmin} />}</Route>
+        <Route path="/join/:token" component={JoinGroup} />
         <Route path="/share/:id" component={PublicSong} />
       </Router>
     </QueryClientProvider>

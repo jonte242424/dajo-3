@@ -1,27 +1,25 @@
 import { useState } from "react";
 import { Plus, Trash2, ChevronDown } from "lucide-react";
-
-interface Bar {
-  chords: Array<{ symbol: string; beat: number }>;
-  lyrics: string;
-}
-
-interface Section {
-  name: string;
-  bars: Bar[];
-}
+import type { Section, Bar, ChordEntry } from "../../../shared/types";
 
 interface SongbookEditorProps {
   sections: Section[];
   onChange: (sections: Section[]) => void;
 }
 
+const makeId = () =>
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `sec-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
 export default function SongbookEditor({ sections, onChange }: SongbookEditorProps) {
   const [expandedSection, setExpandedSection] = useState<number | null>(0);
 
   const addSection = () => {
     const newSection: Section = {
+      id: makeId(),
       name: `Section ${sections.length + 1}`,
+      type: "bars",
       bars: [{ chords: [], lyrics: "" }],
     };
     onChange([...sections, newSection]);
@@ -63,7 +61,11 @@ export default function SongbookEditor({ sections, onChange }: SongbookEditorPro
 
   const addChord = (sectionIdx: number, barIdx: number) => {
     const updated = [...sections];
-    updated[sectionIdx].bars[barIdx].chords.push({ symbol: "", beat: 1 });
+    const existing = updated[sectionIdx].bars[barIdx].chords;
+    // Auto-assign beat: 1st→1, 2nd→3, 3rd→2, 4th→4 (standard jazz voicing)
+    const beatMap: Array<ChordEntry["beat"]> = [1, 3, 2, 4];
+    const beat: ChordEntry["beat"] = beatMap[existing.length] ?? 1;
+    updated[sectionIdx].bars[barIdx].chords.push({ symbol: "", beat });
     onChange(updated);
   };
 
@@ -81,7 +83,7 @@ export default function SongbookEditor({ sections, onChange }: SongbookEditorPro
         <h3 className="text-lg font-bold">Songbook (Lyrics + Chords)</h3>
         <button
           onClick={addSection}
-          className="flex items-center gap-2 px-3 py-1 bg-indigo-100 text-indigo-700 rounded hover:bg-indigo-200 text-sm"
+          className="flex items-center gap-2 px-3 py-1 bg-steel-100 text-steel-700 rounded hover:bg-steel-200 text-sm"
         >
           <Plus className="w-4 h-4" />
           Add Section
@@ -93,7 +95,7 @@ export default function SongbookEditor({ sections, onChange }: SongbookEditorPro
           <p className="text-gray-600 mb-4">No sections yet</p>
           <button
             onClick={addSection}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-steel-600 text-white rounded hover:bg-steel-700"
           >
             <Plus className="w-4 h-4" />
             Create First Section
@@ -147,7 +149,7 @@ export default function SongbookEditor({ sections, onChange }: SongbookEditorPro
                         {bar.chords.length === 0 ? (
                           <button
                             onClick={() => addChord(sectionIdx, barIdx)}
-                            className="px-2 py-1 text-sm bg-white border border-indigo-300 text-indigo-600 rounded hover:bg-indigo-50"
+                            className="px-2 py-1 text-sm bg-white border border-steel-300 text-steel-600 rounded hover:bg-steel-50"
                           >
                             + Add Chord
                           </button>
@@ -174,7 +176,7 @@ export default function SongbookEditor({ sections, onChange }: SongbookEditorPro
                             ))}
                             <button
                               onClick={() => addChord(sectionIdx, barIdx)}
-                              className="px-2 py-1 text-sm bg-white border border-indigo-300 text-indigo-600 rounded hover:bg-indigo-50"
+                              className="px-2 py-1 text-sm bg-white border border-steel-300 text-steel-600 rounded hover:bg-steel-50"
                             >
                               +
                             </button>
@@ -187,9 +189,9 @@ export default function SongbookEditor({ sections, onChange }: SongbookEditorPro
                     <div>
                       <div className="text-xs text-gray-500 font-bold mb-2">Lyrics:</div>
                       <textarea
-                        value={bar.lyrics}
+                        value={bar.lyrics ?? ""}
                         onChange={(e) => {
-                          const updated = { ...bar, lyrics: e.target.value };
+                          const updated: Bar = { ...bar, lyrics: e.target.value };
                           updateBar(sectionIdx, barIdx, updated);
                         }}
                         placeholder="Enter lyrics for this line..."

@@ -9,9 +9,11 @@ import type { Section, Bar, ChordEntry } from "../../shared/types.js";
 import type { TimeSignature, PreferredFormat } from "../../shared/types.js";
 import type { MediaType, ImportedSong } from "../ai-import.js";
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+let _anthropic: Anthropic | null = null;
+function getClient() {
+  if (!_anthropic) _anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  return _anthropic;
+}
 
 const SONGBOOK_SYSTEM = `Du är expert på att läsa låttexter med ackord (ChordPro/Songbook-format).
 Din uppgift är att extrahera texten och placeringen av ackorden EXAKT som de framgår av dokumentet.
@@ -97,7 +99,7 @@ export async function extractSongbook(
   // If substantial extracted text is available (e.g., from ChordPro files),
   // use text-only mode instead of trying to send as document/image
   if (extractedText && extractedText.length > 100) {
-    const response = await anthropic.messages.create({
+    const response = await getClient().messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 16000,
       system: SONGBOOK_SYSTEM,
@@ -120,7 +122,7 @@ export async function extractSongbook(
   }
 
   // Otherwise, use document/image mode
-  const response = await anthropic.messages.create({
+  const response = await getClient().messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 16000,
     system: SONGBOOK_SYSTEM,

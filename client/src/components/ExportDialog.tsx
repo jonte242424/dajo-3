@@ -66,17 +66,17 @@ export function ExportDialog({ songId, songTitle, onClose }: ExportDialogProps) 
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-3xl shadow-lift border border-cream2 w-full max-w-md overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-cream2">
           <div>
-            <h2 className="text-lg font-bold text-gray-900">Exportera PDF</h2>
-            <p className="text-sm text-gray-500 truncate max-w-xs">{songTitle}</p>
+            <h2 className="font-display text-lg font-bold text-ink">Exportera PDF</h2>
+            <p className="text-sm text-ink-soft truncate max-w-xs">{songTitle}</p>
           </div>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-gray-100"
+            className="text-ink-faint hover:text-ink-soft transition-colors p-1.5 rounded-lg hover:bg-cream2"
           >
             <X size={20} />
           </button>
@@ -84,37 +84,37 @@ export function ExportDialog({ songId, songTitle, onClose }: ExportDialogProps) 
 
         {/* Style picker */}
         <div className="px-6 py-5 space-y-3">
-          <p className="text-sm font-medium text-gray-700 mb-2">Välj layout</p>
+          <p className="text-xs font-bold text-ink-soft uppercase tracking-wider mb-2">Välj layout</p>
           {STYLES.map((s) => (
             <button
               key={s.id}
               onClick={() => setSelected(s.id)}
-              className={`w-full flex items-start gap-4 p-4 rounded-xl border-2 transition-all text-left ${
+              className={`w-full flex items-start gap-4 p-4 rounded-2xl border-2 transition-all text-left ${
                 selected === s.id
-                  ? "border-blue-600 bg-blue-50"
-                  : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+                  ? "border-amber-400 bg-amber-50 shadow-soft"
+                  : "border-cream2 bg-white hover:border-amber-200 hover:bg-cream"
               }`}
             >
               <div
                 className={`mt-0.5 flex-shrink-0 ${
-                  selected === s.id ? "text-blue-600" : "text-gray-400"
+                  selected === s.id ? "text-amber-600" : "text-ink-faint"
                 }`}
               >
                 {s.icon}
               </div>
               <div>
                 <p
-                  className={`font-semibold text-sm ${
-                    selected === s.id ? "text-blue-700" : "text-gray-800"
+                  className={`font-display font-bold text-sm ${
+                    selected === s.id ? "text-amber-800" : "text-ink"
                   }`}
                 >
                   {s.label}
                 </p>
-                <p className="text-xs text-gray-500 mt-0.5">{s.desc}</p>
+                <p className="text-xs text-ink-soft mt-0.5">{s.desc}</p>
               </div>
               {selected === s.id && (
                 <div className="ml-auto flex-shrink-0">
-                  <div className="w-5 h-5 rounded-full bg-blue-600 flex items-center justify-center">
+                  <div className="w-5 h-5 rounded-full bg-amber-500 flex items-center justify-center">
                     <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
                       <path
                         fillRule="evenodd"
@@ -131,23 +131,23 @@ export function ExportDialog({ songId, songTitle, onClose }: ExportDialogProps) 
 
         {/* Error */}
         {error && (
-          <div className="mx-6 mb-3 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+          <div className="mx-6 mb-3 rounded-xl bg-rose/20 border border-rose/40 px-4 py-3 text-sm text-amber-900">
             {error}
           </div>
         )}
 
         {/* Footer */}
-        <div className="px-6 py-4 bg-gray-50 flex gap-3">
+        <div className="px-6 py-4 bg-cream flex gap-3">
           <button
             onClick={onClose}
-            className="flex-1 px-4 py-2.5 rounded-xl border border-gray-300 text-gray-700 text-sm font-medium hover:bg-gray-100 transition-colors"
+            className="flex-1 px-4 py-2.5 rounded-xl border border-cream2 bg-white text-ink-soft text-sm font-medium hover:bg-cream2 transition-colors"
           >
             Avbryt
           </button>
           <button
             onClick={handleExport}
             disabled={loading}
-            className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 active:bg-blue-800 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-steel-600 text-white text-sm font-semibold hover:bg-steel-700 active:bg-steel-800 transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-soft"
           >
             {loading ? (
               <>

@@ -99,6 +99,21 @@ CREATE TABLE IF NOT EXISTS training_submissions (
   created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Pilot signups (landing-page interest list)
+CREATE TABLE IF NOT EXISTS pilot_signups (
+  id          SERIAL PRIMARY KEY,
+  email       TEXT UNIQUE NOT NULL,
+  name        TEXT,
+  instrument  TEXT,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Idempotent migrations for existing deployments (safe to run multiple times)
+ALTER TABLE songs ADD COLUMN IF NOT EXISTS original_file_data TEXT;
+ALTER TABLE songs ADD COLUMN IF NOT EXISTS original_file_type TEXT;
+ALTER TABLE songs ADD COLUMN IF NOT EXISTS preferred_format TEXT DEFAULT 'ireal';
+ALTER TABLE songs ADD COLUMN IF NOT EXISTS is_public BOOLEAN DEFAULT FALSE;
+
 -- Auto-update updated_at on songs
 CREATE OR REPLACE FUNCTION update_updated_at()
 RETURNS TRIGGER AS $$

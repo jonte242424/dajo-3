@@ -9,9 +9,11 @@ import type { Section, Bar, ChordEntry } from "../../shared/types.js";
 import type { TimeSignature, PreferredFormat } from "../../shared/types.js";
 import type { MediaType, ImportedSong } from "../ai-import.js";
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+let _anthropic: Anthropic | null = null;
+function getClient() {
+  if (!_anthropic) _anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  return _anthropic;
+}
 
 const IREAL_SYSTEM = `Du är expert på att läsa ackordscheman och kompskisser (iReal Pro-format).
 Din uppgift är att extrahera ALLA takter och ackord exakt som de står.
@@ -57,16 +59,29 @@ Din uppgift är att extrahera ALLA takter och ackord exakt som de står.
 ## REGLER FÖR SEKTIONER:
 - Bevara originalets sektionsnamn: A, B, C, Intro, Verse, Chorus, Bridge, Outro, Coda, Solo
 - Varje sektion är ett eget objekt i sections-arrayen
-- Om samma sektionsbokstav upprepas med OLIKA ackord → skapa separata sektioner (A, A2 eller A, A (da capo))
+- **VIKTIGT — sektionsvariationer**: Om samma sektionsbokstav upprepas med OLIKA ackord (t.ex. "A" första gången har andra ackord än "A" andra gången) → skapa SEPARATA sektioner med tydliga namn (A, A'  eller "Vers 1", "Vers 2")
+- "type" = "bars" för normala ackord-takter
+- "type" = "note" för SCENANVISNINGAR och ANTECKNINGAR som står på egen rad utanför takterna:
+  - "Rit.", "Cresc.", "Accel.", "A tempo", "Ad lib.", "rubato"
+  - "Lasse tar solot", "8 takter drums", "Pianointro", "Bandet vilar"
+  - För "note"-sektioner: sätt "bars": [], fyll "noteText" med texten, och "noteColor" med en färg som passar innebörden:
+    - "yellow" = varning/viktigt (ex "OBS: 3 takter vamp")
+    - "blue" = informativ (ex "Lasse solo")
+    - "green" = ok/milt (ex "A tempo")
+    - "red" = stopp/fermata/slut
+    - "purple" = övergång/modulation
+    - "orange" = energi/up-tempo
+    - "default" = neutral
 
 ## REGLER FÖR REPEAT OCH NAVIGATION:
 - "repeat": "none" | "start" | "end" | "both"
   - "start" = ‖: (repeatstart på denna takt)
   - "end"   = :‖ (repeatslut på denna takt)
   - "both"  = ‖:‖ (start OCH slut, vanlig i korta loopar)
-- "repeatCount": antal ggr att spela (t.ex. 4 = spela 4 ggr). null om ej angivet
-- "ending": volta-nummer (1, 2, 3). null om ej angivet
+- "repeatCount": antal ggr att spela (t.ex. 4 = spela 4 ggr, "x4", "Play 4 times"). null om ej angivet
+- "ending": volta-nummer (1, 2, 3). Detekteras via siffrade hakparenteser ovanför taktlinjer ("1." "2.")
 - "navigation": "D.S. al Coda" | "D.C. al Fine" | "Fine" | "Coda" | "Segno" | null
+  - Markera på DEN TAKT där anvisningen hör (oftast den sista takten i sektionen)
 
 ## REGLER FÖR TONART:
 - Dur: C, Db, D, Eb, E, F, F#, G, Ab, A, Bb, B
@@ -103,7 +118,7 @@ export async function extractIReal(
   // If substantial extracted text is available (e.g., from ChordPro files),
   // use text-only mode
   if (extractedText && extractedText.length > 100) {
-    const response = await anthropic.messages.create({
+    const response = await getClient().messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 16000,
       system: IREAL_SYSTEM,
@@ -126,7 +141,7 @@ export async function extractIReal(
   }
 
   // Otherwise, use document/image mode
-  const response = await anthropic.messages.create({
+  const response = await getClient().messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 16000,
     system: IREAL_SYSTEM,
@@ -189,12 +204,27 @@ function parseIRealResponse(raw: string): ImportedSong[] {
 }
 
 function parseSections(rawSections: any[]): Section[] {
-  return rawSections.map((sec: any, i: number) => ({
-    id: crypto.randomUUID(),
-    name: sec.name || `Sektion ${i + 1}`,
-    type: "bars" as const,
-    bars: parseBars(sec.bars || []),
-  }));
+  return rawSections.map((sec: any, i: number) => {
+    const rawType = typeof sec.type === "string" ? sec.type : "bars";
+    if (rawType === "note") {
+      const validColors = ["default", "yellow", "blue", "green", "red", "purple", "orange"] as const;
+      const color = validColors.includes(sec.noteColor) ? sec.noteColor : "yellow";
+      return {
+        id: crypto.randomUUID(),
+        name: sec.name || `Anteckning ${i + 1}`,
+        type: "note" as const,
+        bars: [],
+        noteText: typeof sec.noteText === "string" ? sec.noteText : (sec.name ?? ""),
+        noteColor: color,
+      };
+    }
+    return {
+      id: crypto.randomUUID(),
+      name: sec.name || `Sektion ${i + 1}`,
+      type: "bars" as const,
+      bars: parseBars(sec.bars || []),
+    };
+  });
 }
 
 function parseBars(rawBars: any[]): Bar[] {

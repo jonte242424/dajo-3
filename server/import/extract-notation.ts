@@ -9,9 +9,11 @@ import type { Section, Bar, ChordEntry, MelodyNote } from "../../shared/types.js
 import type { TimeSignature, PreferredFormat, NoteDuration, Articulation, Dynamic } from "../../shared/types.js";
 import type { MediaType, ImportedSong } from "../ai-import.js";
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+let _anthropic: Anthropic | null = null;
+function getClient() {
+  if (!_anthropic) _anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  return _anthropic;
+}
 
 const NOTATION_SYSTEM = `Du är expert på att läsa musikalisk notation och leadsheets.
 Din uppgift är att extrahera noter, ackord och struktur från notationsdokument.
@@ -125,7 +127,7 @@ export async function extractNotation(
   // If substantial extracted text is available (e.g., from ChordPro files),
   // use text-only mode
   if (extractedText && extractedText.length > 100) {
-    const response = await anthropic.messages.create({
+    const response = await getClient().messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 16000,
       system: NOTATION_SYSTEM,
@@ -148,7 +150,7 @@ export async function extractNotation(
   }
 
   // Otherwise, use document/image mode
-  const response = await anthropic.messages.create({
+  const response = await getClient().messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 16000,
     system: NOTATION_SYSTEM,

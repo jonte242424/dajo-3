@@ -9,9 +9,11 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { PreferredFormat } from "../../shared/types.js";
 import type { MediaType } from "../ai-import.js";
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+let _anthropic: Anthropic | null = null;
+function getClient() {
+  if (!_anthropic) _anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  return _anthropic;
+}
 
 export interface ClassificationResult {
   format: PreferredFormat;
@@ -82,7 +84,7 @@ export async function classifyFormat(
     text: CLASSIFY_PROMPT,
   });
 
-  const response = await anthropic.messages.create({
+  const response = await getClient().messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 256,
     messages: [{ role: "user", content }],

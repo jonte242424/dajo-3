@@ -1,35 +1,22 @@
 import { useState } from "react";
 import { Plus, Trash2, ChevronDown } from "lucide-react";
-
-interface Note {
-  pitch: string;
-  duration: string;
-  octave: number;
-  dotted?: boolean;
-  tied?: boolean;
-  rest?: boolean;
-}
-
-interface Bar {
-  chords: Array<{ symbol: string; beat: number }>;
-  lyrics?: string;
-  melodyNotes?: Note[];
-  timeSignature?: string;
-}
-
-interface Section {
-  name: string;
-  bars: Bar[];
-}
+import type {
+  Section,
+  Bar,
+  MelodyNote,
+  NoteDuration,
+  ChordEntry,
+  TimeSignature,
+} from "../../../shared/types";
 
 interface NotationEditorProps {
   sections: Section[];
   onChange: (sections: Section[]) => void;
-  timeSignature?: string;
+  timeSignature?: TimeSignature | string;
 }
 
 const PITCHES = ["C", "C#", "Db", "D", "D#", "Eb", "E", "F", "F#", "Gb", "G", "G#", "Ab", "A", "A#", "Bb", "B"];
-const DURATIONS = [
+const DURATIONS: Array<{ value: NoteDuration; label: string }> = [
   { value: "w", label: "Whole" },
   { value: "h", label: "Half" },
   { value: "q", label: "Quarter" },
@@ -37,6 +24,11 @@ const DURATIONS = [
   { value: "16", label: "Sixteenth" },
 ];
 const OCTAVES = [3, 4, 5, 6];
+
+const makeId = () =>
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `sec-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 export default function NotationEditor({
   sections,
@@ -52,7 +44,9 @@ export default function NotationEditor({
 
   const addSection = () => {
     const newSection: Section = {
+      id: makeId(),
       name: `Section ${sections.length + 1}`,
+      type: "staff",
       bars: [{ chords: [], lyrics: "", melodyNotes: [] }],
     };
     onChange([...sections, newSection]);
@@ -90,11 +84,11 @@ export default function NotationEditor({
     const updated = [...sections];
     const bar = updated[sectionIdx].bars[barIdx];
     if (!bar.melodyNotes) bar.melodyNotes = [];
-    bar.melodyNotes.push({ pitch: "C", duration: "q", octave: 4 });
+    bar.melodyNotes.push({ pitch: "C", duration: "q" as NoteDuration, octave: 4 });
     onChange(updated);
   };
 
-  const updateNote = (sectionIdx: number, barIdx: number, noteIdx: number, note: Note) => {
+  const updateNote = (sectionIdx: number, barIdx: number, noteIdx: number, note: MelodyNote) => {
     const updated = [...sections];
     updated[sectionIdx].bars[barIdx].melodyNotes![noteIdx] = note;
     onChange(updated);
@@ -111,7 +105,10 @@ export default function NotationEditor({
   const addChord = (sectionIdx: number, barIdx: number, symbol: string) => {
     const updated = [...sections];
     const bar = updated[sectionIdx].bars[barIdx];
-    bar.chords.push({ symbol, beat: bar.chords.length + 1 });
+    // Clamp beat position to valid range 1-4
+    const beatMap: Array<ChordEntry["beat"]> = [1, 2, 3, 4];
+    const beat: ChordEntry["beat"] = beatMap[bar.chords.length] ?? 1;
+    bar.chords.push({ symbol, beat });
     onChange(updated);
   };
 
@@ -121,7 +118,7 @@ export default function NotationEditor({
         <h3 className="text-lg font-bold">Notation (Staff Music)</h3>
         <button
           onClick={addSection}
-          className="flex items-center gap-2 px-3 py-1 bg-indigo-100 text-indigo-700 rounded hover:bg-indigo-200 text-sm"
+          className="flex items-center gap-2 px-3 py-1 bg-steel-100 text-steel-700 rounded hover:bg-steel-200 text-sm"
         >
           <Plus className="w-4 h-4" />
           Add Section
@@ -133,7 +130,7 @@ export default function NotationEditor({
           <p className="text-gray-600 mb-4">No sections yet</p>
           <button
             onClick={addSection}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-steel-600 text-white rounded hover:bg-steel-700"
           >
             <Plus className="w-4 h-4" />
             Create First Section
@@ -217,7 +214,7 @@ export default function NotationEditor({
                         <div className="text-xs text-gray-500 font-bold">Melody Notes:</div>
                         <button
                           onClick={() => addNote(sectionIdx, barIdx)}
-                          className="text-xs px-2 py-1 bg-indigo-100 text-indigo-700 rounded hover:bg-indigo-200"
+                          className="text-xs px-2 py-1 bg-steel-100 text-steel-700 rounded hover:bg-steel-200"
                         >
                           + Add Note
                         </button>
@@ -269,7 +266,10 @@ export default function NotationEditor({
                                 <select
                                   value={note.duration}
                                   onChange={(e) =>
-                                    updateNote(sectionIdx, barIdx, noteIdx, { ...note, duration: e.target.value })
+                                    updateNote(sectionIdx, barIdx, noteIdx, {
+                                      ...note,
+                                      duration: e.target.value as NoteDuration,
+                                    })
                                   }
                                   className="px-2 py-1 border rounded"
                                 >

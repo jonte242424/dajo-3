@@ -101,8 +101,8 @@ export default function ChordInput({
         onKeyDown={handleKeyDown}
         onBlur={() => setTimeout(() => setOpen(false), 120)}
         placeholder={placeholder}
-        className="w-full bg-transparent text-sm font-mono font-semibold text-indigo-700
-                   focus:outline-none placeholder:text-indigo-300 px-1"
+        className="w-full bg-transparent text-sm font-mono font-semibold text-steel-700
+                   focus:outline-none placeholder:text-steel-300 px-1"
         spellCheck={false}
         autoComplete="off"
       />
@@ -115,8 +115,8 @@ export default function ChordInput({
               onMouseDown={() => pickSuggestion(s)}
               className={`w-full text-left px-3 py-1.5 text-sm font-mono transition-colors
                          ${i === selectedIdx
-                           ? "bg-indigo-600 text-white"
-                           : "text-gray-700 hover:bg-indigo-50"}`}
+                           ? "bg-steel-600 text-white"
+                           : "text-gray-700 hover:bg-steel-50"}`}
             >
               {s}
             </button>

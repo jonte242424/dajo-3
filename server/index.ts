@@ -9,9 +9,10 @@ import bcrypt from "bcryptjs";
 import { db } from "./db.js";
 import { analyzeFile, type MediaType } from "./ai-import.js";
 import { generatePdf, generateSetlistPdf, type ExportStyle } from "./pdf-export.js";
+import { sendPilotWelcome, notifyAdminOfSignup } from "./email.js";
 import type { Section } from "../shared/types.js";
 
-dotenv.config({ path: ".env.local" });
+dotenv.config({ path: ".env.local", override: true });
 
 // ─── Auto-migrate databas vid start ──────────────────────────────────────────
 
@@ -104,6 +105,37 @@ function requireAuth(req: any, res: any, next: any) {
   if (!token) return res.status(401).json({ error: "Inte inloggad" });
   try {
     req.user = jwt.verify(token, JWT_SECRET);
+    next();
+  } catch {
+    res.status(401).json({ error: "Ogiltig session — logga in igen" });
+  }
+}
+
+// ─── Admin allowlist ──────────────────────────────────────────────────────────
+// Comma-separated list of admin e-mail addresses via PILOT_ADMIN_EMAILS.
+// Default to Jonas + David so the admin-vy fungerar direkt under piloten.
+const ADMIN_EMAILS = new Set(
+  (process.env.PILOT_ADMIN_EMAILS ??
+    "hello@dajo.club,jonas@combined.se,david@combined.se,jonas.martensson@combined.se"
+  )
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean)
+);
+
+function isAdminEmail(email?: string): boolean {
+  return !!email && ADMIN_EMAILS.has(email.toLowerCase());
+}
+
+function requireAdmin(req: any, res: any, next: any) {
+  const token = req.headers.authorization?.split(" ")[1];
+  if (!token) return res.status(401).json({ error: "Inte inloggad" });
+  try {
+    const user = jwt.verify(token, JWT_SECRET) as any;
+    if (!isAdminEmail(user.email)) {
+      return res.status(403).json({ error: "Endast administratörer har tillgång" });
+    }
+    req.user = user;
     next();
   } catch {
     res.status(401).json({ error: "Ogiltig session — logga in igen" });
@@ -250,6 +282,176 @@ app.post("/api/auth/login", (req, res) => {
   }
 });
 
+// ─── Pilot signup ─────────────────────────────────────────────────────────────
+
+interface PilotSignup {
+  id: number;
+  email: string;
+  name?: string;
+  instrument?: string;
+  createdAt: string;
+}
+const MOCK_PILOT_SIGNUPS: PilotSignup[] = [];
+let mockPilotId = 1;
+
+// Admin: öppna/stänga pilotanmälan (flag deklareras här så POST /api/pilot/signup
+// kan läsa den)
+let PILOT_SIGNUPS_OPEN = true;
+
+app.post("/api/pilot/signup", async (req, res) => {
+  if (!PILOT_SIGNUPS_OPEN) {
+    return res.status(403).json({ error: "Pilotanmälan är stängd just nu" });
+  }
+  const { email, name, instrument } = req.body ?? {};
+
+  if (!email || typeof email !== "string" || !email.includes("@")) {
+    return res.status(400).json({ error: "Giltig e-post krävs" });
+  }
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanName = typeof name === "string" ? name.trim().slice(0, 100) : undefined;
+  const cleanInstrument = typeof instrument === "string" ? instrument.trim().slice(0, 100) : undefined;
+
+  // Fire-and-forget mail-triggers. Vi väntar inte på dem så att
+  // anmälaren får ett snabbt 200-svar även om Resend är trögt.
+  function fireEmails(isNew: boolean) {
+    if (!isNew) return;
+    const signup = { email: cleanEmail, name: cleanName, instrument: cleanInstrument };
+    sendPilotWelcome(signup).catch((err) =>
+      console.error("[pilot] welcome-mail failed:", err),
+    );
+    const firstAdmin = [...ADMIN_EMAILS][0];
+    if (firstAdmin) {
+      notifyAdminOfSignup({ adminEmail: firstAdmin, signup }).catch((err) =>
+        console.error("[pilot] admin-notif failed:", err),
+      );
+    }
+  }
+
+  if (!db) {
+    if (MOCK_PILOT_SIGNUPS.some((s) => s.email === cleanEmail)) {
+      return res.json({ ok: true, alreadyRegistered: true });
+    }
+    MOCK_PILOT_SIGNUPS.push({
+      id: mockPilotId++,
+      email: cleanEmail,
+      name: cleanName,
+      instrument: cleanInstrument,
+      createdAt: new Date().toISOString(),
+    });
+    console.log(`📝 Pilot signup (mock): ${cleanEmail}${cleanName ? ` · ${cleanName}` : ""}${cleanInstrument ? ` · ${cleanInstrument}` : ""}`);
+    fireEmails(true);
+    return res.json({ ok: true });
+  }
+
+  try {
+    const result = await db.query(
+      `INSERT INTO pilot_signups (email, name, instrument)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (email) DO NOTHING
+       RETURNING id`,
+      [cleanEmail, cleanName ?? null, cleanInstrument ?? null]
+    );
+    const isNewSignup = (result.rowCount ?? 0) > 0;
+    fireEmails(isNewSignup);
+    res.json({ ok: true, alreadyRegistered: !isNewSignup });
+  } catch (err: any) {
+    console.error("Pilot signup error:", err);
+    res.status(500).json({ error: "Kunde inte spara anmälan" });
+  }
+});
+
+// Publik avanmälan (för List-Unsubscribe-headern i utskick).
+// Funkar både som GET (länk man klickar) och POST (RFC 8058 one-click).
+async function handleUnsubscribe(req: any, res: any) {
+  const email = (req.query?.email ?? req.body?.email ?? "").toString().trim().toLowerCase();
+
+  // Vi ska aldrig låta endpointen kasta — även tomma anrop ger en vänlig sida.
+  try {
+    if (email && email.includes("@")) {
+      if (db) {
+        await db.query("DELETE FROM pilot_signups WHERE email = $1", [email]);
+      } else {
+        const idx = MOCK_PILOT_SIGNUPS.findIndex((s) => s.email === email);
+        if (idx >= 0) MOCK_PILOT_SIGNUPS.splice(idx, 1);
+      }
+      console.log(`📭 Unsubscribed: ${email}`);
+    }
+  } catch (err) {
+    console.error("Unsubscribe error:", err);
+  }
+
+  res
+    .status(200)
+    .setHeader("Content-Type", "text/html; charset=utf-8")
+    .send(`<!doctype html><html lang="sv"><head><meta charset="utf-8">
+<title>Avanmäld — DAJO</title><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{margin:0;background:#FBF8F3;color:#1F2937;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh}
+.card{max-width:440px;padding:40px;background:#fff;border:1px solid #F5F0E6;border-radius:24px;text-align:center}
+h1{font-family:Georgia,serif;margin:0 0 12px 0;color:#1F2937}
+p{margin:0;color:#6B7280;font-size:14px;line-height:1.6}a{color:#3A6391;text-decoration:none;font-weight:600}</style>
+</head><body><div class="card">
+<h1>Du är avanmäld 👋</h1>
+<p>Inga fler mejl från DAJO. Vi är ledsna att se dig gå — men förstår. Om det var ett misstag, <a href="${APP_URL}">anmäl dig igen här</a>.</p>
+</div></body></html>`);
+}
+
+app.get("/api/pilot/unsubscribe", handleUnsubscribe);
+app.post("/api/pilot/unsubscribe", handleUnsubscribe);
+
+// Admin: list pilot signups
+app.get("/api/pilot/signups", requireAdmin, async (_req: any, res) => {
+  if (!db) return res.json(MOCK_PILOT_SIGNUPS.slice().reverse());
+  try {
+    const result = await db.query(
+      "SELECT id, email, name, instrument, created_at FROM pilot_signups ORDER BY created_at DESC"
+    );
+    res.json(result.rows);
+  } catch (err: any) {
+    console.error("Pilot list error:", err);
+    res.status(500).json({ error: "Kunde inte hämta anmälningar" });
+  }
+});
+
+// Admin: CSV-export av pilotanmälningar
+app.get("/api/pilot/signups.csv", requireAdmin, async (_req: any, res) => {
+  function csvEscape(v: any): string {
+    if (v === null || v === undefined) return "";
+    const s = String(v);
+    if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+  }
+  try {
+    const rows = db
+      ? (await db.query(
+          "SELECT id, email, name, instrument, created_at FROM pilot_signups ORDER BY created_at DESC"
+        )).rows
+      : MOCK_PILOT_SIGNUPS.slice().reverse();
+
+    const header = "id,email,name,instrument,created_at";
+    const lines = rows.map((r: any) =>
+      [r.id, r.email, r.name, r.instrument, r.created_at].map(csvEscape).join(",")
+    );
+    const csv = [header, ...lines].join("\n");
+
+    const filename = `dajo-pilot-signups-${new Date().toISOString().slice(0, 10)}.csv`;
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send("\uFEFF" + csv); // BOM så Excel öppnar UTF-8 korrekt
+  } catch (err: any) {
+    console.error("Pilot CSV error:", err);
+    res.status(500).json({ error: "Kunde inte generera CSV" });
+  }
+});
+
+app.get("/api/pilot/status", (_req, res) => {
+  res.json({ open: PILOT_SIGNUPS_OPEN });
+});
+app.post("/api/pilot/status", requireAdmin, (req: any, res) => {
+  const open = !!req.body?.open;
+  PILOT_SIGNUPS_OPEN = open;
+  res.json({ open: PILOT_SIGNUPS_OPEN });
+});
+
 // ─── Debug: Version ───────────────────────────────────────────────────────────
 
 app.get("/api/debug/version", (req, res) => {
@@ -265,7 +467,12 @@ app.get("/api/debug/version", (req, res) => {
 // ─── Auth: Me ─────────────────────────────────────────────────────────────────
 
 app.get("/api/auth/me", requireAuth, (req: any, res) => {
-  res.json({ user: req.user });
+  res.json({
+    user: {
+      ...req.user,
+      isAdmin: isAdminEmail(req.user?.email),
+    },
+  });
 });
 
 // ─── Songs: List ─────────────────────────────────────────────────────────────
@@ -337,6 +544,11 @@ app.get("/api/songs/:id", requireAuth, async (req: any, res) => {
     );
     const song = result.rows[0];
     if (!song) return res.status(404).json({ error: "Låt hittades inte" });
+    // Map snake_case DB columns to camelCase for frontend
+    if (song.original_file_data) {
+      song.originalFileData = song.original_file_data;
+      song.originalFileType = song.original_file_type;
+    }
     res.json(song);
   } catch {
     res.status(500).json({ error: "Serverfel" });
@@ -731,6 +943,47 @@ app.get("/api/setlists/:id/export", requireAuth, async (req: any, res) => {
     return res.status(400).json({ error: "Ogiltig stil. Välj: ireal, songbook eller notation" });
   }
 
+  // No-DB fallback: use MOCK_SETLISTS and MOCK_SONGS
+  if (!db) {
+    try {
+      const sl = MOCK_SETLISTS.find((s) => s.id === id && s.userId === String(req.user.id));
+      if (!sl) return res.status(404).json({ error: "Spellista hittades inte" });
+      if (sl.songs.length === 0) return res.status(400).json({ error: "Spellistan är tom" });
+
+      const songs = sl.songs
+        .sort((a, b) => a.position - b.position)
+        .map((entry) => {
+          const full = MOCK_SONGS.find((s) => s.id === entry.id) as any;
+          if (!full) return null;
+          return {
+            title: full.title,
+            artist: full.artist || "",
+            key: full.key || "C",
+            tempo: full.tempo || 120,
+            timeSignature: full.timeSignature || "4/4",
+            style: full.style || "",
+            notes: full.notes || "",
+            sections: full.sections || [],
+          };
+        })
+        .filter(Boolean) as any[];
+
+      if (songs.length === 0) return res.status(400).json({ error: "Inga giltiga låtar i spellistan" });
+
+      const pdfBuffer = await generateSetlistPdf(
+        { name: sl.name, description: sl.description || "", songs },
+        style
+      );
+      const safeName = sl.name.replace(/[^a-zA-Z0-9åäöÅÄÖ\s-]/g, "").trim().replace(/\s+/g, "_");
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="${safeName}_${style}.pdf"`);
+      return res.send(pdfBuffer);
+    } catch (err: any) {
+      console.error("Setlist PDF export error (no-db):", err);
+      return res.status(500).json({ error: "Kunde inte generera spellista-PDF", detail: err?.message });
+    }
+  }
+
   try {
     // Fetch setlist with songs
     const setlistResult = await db.query(
@@ -802,7 +1055,7 @@ app.get("/api/setlists/:id/export", requireAuth, async (req: any, res) => {
 // ─── AI Import: Analyze file (PDF or image) ──────────────────────────────────
 
 app.post("/api/import/analyze", requireAuth, async (req: any, res) => {
-  const { base64, mediaType, filename } = req.body;
+  const { base64, mediaType, filename, transcribeLyrics } = req.body;
 
   if (!base64 || !mediaType || !filename) {
     return res.status(400).json({ error: "base64, mediaType och filename krävs" });
@@ -829,7 +1082,9 @@ app.post("/api/import/analyze", requireAuth, async (req: any, res) => {
   }
 
   try {
-    const result = await analyzeFile(base64, mediaType, filename);
+    const result = await analyzeFile(base64, mediaType, filename, undefined, {
+      transcribeLyrics: Boolean(transcribeLyrics),
+    });
     res.json(result);
   } catch (err: any) {
     console.error("AI import error:", err);
@@ -845,10 +1100,17 @@ app.post("/api/import/save", requireAuth, async (req: any, res) => {
     return res.status(400).json({ error: "Inga låtar att spara" });
   }
 
+  const { originalFileData, originalFileType } = req.body;
+
   const saved = [];
   for (const song of songs.slice(0, 20)) { // max 20 songs per import
     if (!db) {
-      const s = { id: Date.now() + Math.random(), userId: String(req.user.id), ...song, isPublic: false, createdAt: new Date().toISOString() };
+      const s = {
+        id: Date.now() + Math.random(), userId: String(req.user.id), ...song,
+        isPublic: false, createdAt: new Date().toISOString(),
+        originalFileData: originalFileData || undefined,
+        originalFileType: originalFileType || undefined,
+      };
       MOCK_SONGS.push(s as any);
       saved.push(s);
       continue;
@@ -856,12 +1118,13 @@ app.post("/api/import/save", requireAuth, async (req: any, res) => {
     try {
       const result = await db.query(
         `INSERT INTO songs (user_id, title, artist, key, tempo, time_signature, style,
-                            sections, notes, preferred_format)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id, title`,
+                            sections, notes, preferred_format, original_file_data, original_file_type)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id, title`,
         [req.user.id, song.title, song.artist || "", song.key || "C",
          song.tempo || 120, song.timeSignature || "4/4", song.style || "",
          JSON.stringify(song.sections || []), song.notes || "",
-         song.preferredFormat || "ireal"]
+         song.preferredFormat || "ireal",
+         originalFileData || null, originalFileType || null]
       );
       saved.push(result.rows[0]);
     } catch (err) {
@@ -870,6 +1133,255 @@ app.post("/api/import/save", requireAuth, async (req: any, res) => {
   }
 
   res.status(201).json({ saved });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BANDSPACES (groups) + share tokens
+// ═══════════════════════════════════════════════════════════════════════════
+
+// In-memory mock state for groups/invitations/shares when db is not available
+const MOCK_GROUPS: { id: number; name: string; createdBy: number; memberIds: number[] }[] = [];
+const MOCK_INVITATIONS: { id: number; groupId: number; token: string; used: boolean }[] = [];
+const MOCK_SHARES: { token: string; resourceType: "song" | "setlist"; resourceId: number }[] = [];
+let mockGroupId = 1;
+let mockInvId = 1;
+
+function randomToken(): string {
+  return Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+}
+
+// ─── Groups: list (where I'm member) ─────────────────────────────────────────
+
+app.get("/api/groups", requireAuth, async (req: any, res) => {
+  if (!db) {
+    const mine = MOCK_GROUPS.filter((g) => g.memberIds.includes(Number(req.user.id)));
+    return res.json(mine.map((g) => ({ id: g.id, name: g.name, memberCount: g.memberIds.length })));
+  }
+  try {
+    const result = await db.query(
+      `SELECT g.id, g.name, g.created_by,
+              (SELECT COUNT(*)::int FROM group_members gm WHERE gm.group_id = g.id) AS member_count
+       FROM groups g
+       JOIN group_members m ON m.group_id = g.id
+       WHERE m.user_id = $1
+       ORDER BY g.created_at DESC`,
+      [req.user.id]
+    );
+    res.json(result.rows);
+  } catch (err: any) {
+    console.error("Groups list error:", err);
+    res.status(500).json({ error: "Kunde inte hämta bandspaces" });
+  }
+});
+
+// ─── Groups: create ──────────────────────────────────────────────────────────
+
+app.post("/api/groups", requireAuth, async (req: any, res) => {
+  const { name } = req.body;
+  if (!name || typeof name !== "string") return res.status(400).json({ error: "Namn krävs" });
+
+  if (!db) {
+    const g = { id: mockGroupId++, name, createdBy: Number(req.user.id), memberIds: [Number(req.user.id)] };
+    MOCK_GROUPS.push(g);
+    return res.json({ id: g.id, name: g.name, memberCount: 1 });
+  }
+
+  try {
+    const result = await db.query(
+      `WITH new_group AS (
+         INSERT INTO groups (name, created_by) VALUES ($1, $2) RETURNING id, name
+       )
+       INSERT INTO group_members (group_id, user_id)
+       SELECT id, $2 FROM new_group
+       RETURNING group_id`,
+      [name, req.user.id]
+    );
+    const groupId = result.rows[0].group_id;
+    const g = await db.query("SELECT id, name FROM groups WHERE id=$1", [groupId]);
+    res.json({ ...g.rows[0], memberCount: 1 });
+  } catch (err: any) {
+    console.error("Group create error:", err);
+    res.status(500).json({ error: "Kunde inte skapa bandspace" });
+  }
+});
+
+// ─── Groups: create invitation link ──────────────────────────────────────────
+
+app.post("/api/groups/:id/invite", requireAuth, async (req: any, res) => {
+  const groupId = Number(req.params.id);
+  const token = randomToken();
+
+  if (!db) {
+    const g = MOCK_GROUPS.find((x) => x.id === groupId);
+    if (!g || !g.memberIds.includes(Number(req.user.id))) {
+      return res.status(403).json({ error: "Du är inte medlem i denna bandspace" });
+    }
+    MOCK_INVITATIONS.push({ id: mockInvId++, groupId, token, used: false });
+    return res.json({ token, url: `/join/${token}` });
+  }
+
+  try {
+    // Check membership
+    const member = await db.query(
+      "SELECT 1 FROM group_members WHERE group_id=$1 AND user_id=$2",
+      [groupId, req.user.id]
+    );
+    if (!member.rows[0]) return res.status(403).json({ error: "Du är inte medlem i denna bandspace" });
+
+    await db.query(
+      "INSERT INTO invitations (group_id, token, created_by) VALUES ($1, $2, $3)",
+      [groupId, token, req.user.id]
+    );
+    res.json({ token, url: `/join/${token}` });
+  } catch (err: any) {
+    console.error("Invite create error:", err);
+    res.status(500).json({ error: "Kunde inte skapa inbjudan" });
+  }
+});
+
+// ─── Groups: accept invitation (join) ────────────────────────────────────────
+
+app.post("/api/groups/join/:token", requireAuth, async (req: any, res) => {
+  const token = req.params.token;
+
+  if (!db) {
+    const inv = MOCK_INVITATIONS.find((i) => i.token === token && !i.used);
+    if (!inv) return res.status(404).json({ error: "Ogiltig eller använd inbjudningslänk" });
+    const g = MOCK_GROUPS.find((x) => x.id === inv.groupId);
+    if (!g) return res.status(404).json({ error: "Bandspace finns inte" });
+    if (!g.memberIds.includes(Number(req.user.id))) g.memberIds.push(Number(req.user.id));
+    inv.used = true;
+    return res.json({ id: g.id, name: g.name });
+  }
+
+  try {
+    const invRes = await db.query(
+      "SELECT id, group_id FROM invitations WHERE token=$1 AND used=false",
+      [token]
+    );
+    if (!invRes.rows[0]) return res.status(404).json({ error: "Ogiltig eller använd inbjudningslänk" });
+    const { id: invId, group_id: groupId } = invRes.rows[0];
+
+    await db.query(
+      "INSERT INTO group_members (group_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+      [groupId, req.user.id]
+    );
+    await db.query("UPDATE invitations SET used=true WHERE id=$1", [invId]);
+    const g = await db.query("SELECT id, name FROM groups WHERE id=$1", [groupId]);
+    res.json(g.rows[0]);
+  } catch (err: any) {
+    console.error("Join group error:", err);
+    res.status(500).json({ error: "Kunde inte gå med" });
+  }
+});
+
+// ─── Groups: members ─────────────────────────────────────────────────────────
+
+app.get("/api/groups/:id/members", requireAuth, async (req: any, res) => {
+  const groupId = Number(req.params.id);
+  if (!db) {
+    const g = MOCK_GROUPS.find((x) => x.id === groupId);
+    if (!g || !g.memberIds.includes(Number(req.user.id))) {
+      return res.status(403).json({ error: "Inte medlem" });
+    }
+    return res.json(g.memberIds.map((id) => ({ id, email: `user${id}@mock.local`, name: `User ${id}` })));
+  }
+  try {
+    const member = await db.query(
+      "SELECT 1 FROM group_members WHERE group_id=$1 AND user_id=$2",
+      [groupId, req.user.id]
+    );
+    if (!member.rows[0]) return res.status(403).json({ error: "Inte medlem" });
+
+    const result = await db.query(
+      `SELECT u.id, u.email, u.name FROM users u
+       JOIN group_members gm ON gm.user_id = u.id
+       WHERE gm.group_id = $1 ORDER BY u.id`,
+      [groupId]
+    );
+    res.json(result.rows);
+  } catch {
+    res.status(500).json({ error: "Serverfel" });
+  }
+});
+
+// ─── Share tokens: create token for setlist/song ─────────────────────────────
+
+app.post("/api/shares", requireAuth, async (req: any, res) => {
+  const { resourceType, resourceId } = req.body;
+  if (!["song", "setlist"].includes(resourceType)) {
+    return res.status(400).json({ error: "resourceType måste vara 'song' eller 'setlist'" });
+  }
+  const id = Number(resourceId);
+  if (!id) return res.status(400).json({ error: "resourceId krävs" });
+
+  const token = randomToken();
+
+  if (!db) {
+    MOCK_SHARES.push({ token, resourceType, resourceId: id });
+    return res.json({ token, url: `/s/${token}` });
+  }
+
+  try {
+    await db.query(
+      "INSERT INTO shares (token, resource_type, resource_id, created_by) VALUES ($1, $2, $3, $4)",
+      [token, resourceType, id, req.user.id]
+    );
+    res.json({ token, url: `/s/${token}` });
+  } catch (err: any) {
+    console.error("Share create error:", err);
+    res.status(500).json({ error: "Kunde inte skapa delningslänk" });
+  }
+});
+
+// ─── Share tokens: resolve token → resource (no auth) ────────────────────────
+
+app.get("/api/s/:token", async (req, res) => {
+  const token = req.params.token;
+
+  if (!db) {
+    const share = MOCK_SHARES.find((s) => s.token === token);
+    if (!share) return res.status(404).json({ error: "Delningslänken finns inte" });
+    if (share.resourceType === "song") {
+      const song = MOCK_SONGS.find((s) => s.id === share.resourceId);
+      if (!song) return res.status(404).json({ error: "Låten finns inte längre" });
+      return res.json({ type: "song", data: song });
+    } else {
+      const setlist = MOCK_SETLISTS.find((s) => s.id === share.resourceId);
+      if (!setlist) return res.status(404).json({ error: "Spellistan finns inte längre" });
+      // setlist.songs already contains denormalized song data (id, title, artist, key, tempo)
+      return res.json({ type: "setlist", data: setlist });
+    }
+  }
+
+  try {
+    const shareRes = await db.query(
+      "SELECT resource_type, resource_id FROM shares WHERE token=$1",
+      [token]
+    );
+    if (!shareRes.rows[0]) return res.status(404).json({ error: "Delningslänken finns inte" });
+    const { resource_type, resource_id } = shareRes.rows[0];
+
+    if (resource_type === "song") {
+      const r = await db.query("SELECT * FROM songs WHERE id=$1", [resource_id]);
+      if (!r.rows[0]) return res.status(404).json({ error: "Låten finns inte längre" });
+      return res.json({ type: "song", data: r.rows[0] });
+    } else if (resource_type === "setlist") {
+      const sl = await db.query("SELECT * FROM setlists WHERE id=$1", [resource_id]);
+      if (!sl.rows[0]) return res.status(404).json({ error: "Spellistan finns inte längre" });
+      const songs = await db.query(
+        `SELECT s.* FROM songs s
+         JOIN setlist_songs ss ON ss.song_id = s.id
+         WHERE ss.setlist_id = $1 ORDER BY ss.position`,
+        [resource_id]
+      );
+      return res.json({ type: "setlist", data: { ...sl.rows[0], songs: songs.rows } });
+    }
+    res.status(404).json({ error: "Okänd resurstyp" });
+  } catch (err: any) {
+    console.error("Share resolve error:", err);
+    res.status(500).json({ error: "Serverfel" });
+  }
 });
 
 // ─── Serve frontend in production ────────────────────────────────────────────
