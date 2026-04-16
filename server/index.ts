@@ -65,6 +65,25 @@ const isProd = process.env.NODE_ENV === "production";
 const PORT = parseInt(process.env.PORT || "3001", 10);
 const APP_URL = (process.env.APP_URL ?? "https://dajo.club").replace(/\/$/, "");
 
+// ─── Trust proxy (Render sitter bakom LB) ────────────────────────────────────
+// Krävs för att req.hostname och req.secure ska respektera X-Forwarded-Host
+// och X-Forwarded-Proto. Utan detta ser servern alltid "localhost" och "http".
+app.set("trust proxy", 1);
+
+// ─── Canonical-domän redirect: *.onrender.com → dajo.club ────────────────────
+// Efter domän-cutovern ska ingen länka in via den gamla Render-sub-domänen.
+// 301 gör att sökmotorer och bokmärken uppdateras. Healthchecks (utan Host) och
+// devserver (isProd=false) lämnas orörda.
+if (isProd) {
+  app.use((req, res, next) => {
+    const host = req.hostname;
+    if (host && host.endsWith(".onrender.com")) {
+      return res.redirect(301, `https://dajo.club${req.originalUrl}`);
+    }
+    next();
+  });
+}
+
 // ─── JWT_SECRET hardening ────────────────────────────────────────────────────
 // Kasta direkt om JWT_SECRET saknas i produktion. Tidigare fanns en fallback
 // "dev-secret-change-in-prod" som är offentlig i git-historiken – vilket
