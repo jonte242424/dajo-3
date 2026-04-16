@@ -647,6 +647,17 @@ app.get("/api/debug/version", requireAdmin, (_req, res) => {
   });
 });
 
+// TILLFÄLLIGT (tas bort efter verifiering 2026-04-16): publik diagnostik för
+// att bekräfta om PILOT_ADMIN_EMAILS är effektiv i runtime-processen. Returnerar
+// INGA e-postadresser — bara ett antal + ett boolean. Ingen recon-risk.
+app.get("/api/debug/admin-setup", (_req, res) => {
+  res.json({
+    hasEnvVar: !!process.env.PILOT_ADMIN_EMAILS,
+    envVarLength: (process.env.PILOT_ADMIN_EMAILS ?? "").length,
+    adminCount: ADMIN_EMAILS.size,
+  });
+});
+
 // ─── Feedback (admin annotate & review) ──────────────────────────────────────
 // In-app feedback widget: admins klickar på element i prod-appen och lämnar
 // kommentarer. Endast admins får skriva/läsa — vanliga användare ser aldrig
