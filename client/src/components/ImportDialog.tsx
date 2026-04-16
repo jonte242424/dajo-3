@@ -149,7 +149,11 @@ export default function ImportDialog({ onClose }: Props) {
     const isProFile = ['pro', 'cho', 'chopro', 'chordpro'].includes(ext || '');
 
     if (!ACCEPTED.includes(f.type) && !isProFile) {
-      setError(`Filtypen stöds inte. Använd PDF, PNG, JPEG, WebP, ChordPro (.pro) eller audio.`);
+      setError(
+        audioEnabled
+          ? "Filtypen stöds inte. Använd PDF, PNG, JPEG, WebP, ChordPro (.pro) eller audio (MP3/WAV)."
+          : "Filtypen stöds inte. Använd PDF, PNG, JPEG, WebP eller ChordPro (.pro)."
+      );
       setStep("error");
       return;
     }
@@ -271,9 +275,15 @@ export default function ImportDialog({ onClose }: Props) {
               >
                 <Upload size={32} className={`mx-auto mb-3 transition-colors ${dragOver ? "text-amber-500" : "text-ink-faint"}`} />
                 <p className="font-display font-bold text-ink mb-1">Dra hit eller klicka för att välja fil</p>
-                <p className="text-sm text-ink-soft">PDF, PNG, JPEG, WebP, ChordPro (.pro), MP3, WAV — upp till 100MB</p>
+                <p className="text-sm text-ink-soft">
+                  {audioEnabled
+                    ? "PDF, PNG, JPEG, WebP, ChordPro (.pro), MP3, WAV — upp till 100MB"
+                    : "PDF, PNG, JPEG, WebP, ChordPro (.pro) — upp till 100MB"}
+                </p>
                 <p className="text-xs text-amber-700 mt-3">
-                  Claude AI analyserar noter, ackordscheman, inspelningar och kompskisser
+                  {audioEnabled
+                    ? "Claude AI analyserar noter, ackordscheman, inspelningar och kompskisser"
+                    : "Claude AI analyserar noter, ackordscheman och kompskisser"}
                 </p>
                 <input
                   ref={fileRef}
