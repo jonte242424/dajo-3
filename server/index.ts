@@ -215,11 +215,14 @@ function requireAuth(req: any, res: any, next: any) {
 
 // ─── Admin allowlist ──────────────────────────────────────────────────────────
 // Comma-separated list of admin e-mail addresses via PILOT_ADMIN_EMAILS.
-// Default to Jonas + David så admin-vyn fungerar direkt under piloten.
+// INGEN fallback — om env-variabeln saknas eller är tom finns det noll admins.
+// Det är medvetet: bättre att admin-panelen "slutar fungera" än att gamla
+// hårdkodade e-postadresser tyst får tillgång om env-variabeln försvinner.
+if (isProd && !process.env.PILOT_ADMIN_EMAILS) {
+  console.warn("⚠️  PILOT_ADMIN_EMAILS ej satt i produktion — inga admins kommer finnas.");
+}
 const ADMIN_EMAILS = new Set(
-  (process.env.PILOT_ADMIN_EMAILS ??
-    "hello@dajo.club,jonas@combined.se,david@combined.se,jonas.martensson@combined.se"
-  )
+  (process.env.PILOT_ADMIN_EMAILS ?? "")
     .split(",")
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean)
