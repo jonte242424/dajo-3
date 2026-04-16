@@ -136,10 +136,16 @@ app.use(
 );
 
 // ─── Body-limit ──────────────────────────────────────────────────────────────
-// Default: 100kb. Stora base64-uppladdningar till /api/import/analyze får en
-// egen parser längre ner, så vanliga endpoints inte kan DDoSas med 100MB JSON.
-app.use(express.json({ limit: "100kb" }));
+// Default: 100kb. Stora base64-uppladdningar till /api/import/* får en egen
+// parser (bigJson, 25MB) längre ner, så vanliga endpoints inte kan DDoSas med
+// 100MB JSON. OBS: den globala parsern måste HOPPA ÖVER import-routes — annars
+// triggar 100kb-gränsen innan route-specifika middleware hinner köra, och
+// användaren ser "request entity too large" redan för en 554kb PDF.
 const bigJson = express.json({ limit: "25mb" });
+app.use((req, res, next) => {
+  if (req.path.startsWith("/api/import/")) return next();
+  return express.json({ limit: "100kb" })(req, res, next);
+});
 
 // ─── Rate limiters ───────────────────────────────────────────────────────────
 // Skydd mot spam/brute-force. Fönstren är korta med små tak – de viktiga är
