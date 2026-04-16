@@ -4,12 +4,15 @@ import dotenv from "dotenv";
 import { fileURLToPath } from "url";
 import path from "path";
 import fs from "fs";
+import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
+import rateLimit from "express-rate-limit";
 import { db } from "./db.js";
 import { analyzeFile, type MediaType } from "./ai-import.js";
 import { generatePdf, generateSetlistPdf, type ExportStyle } from "./pdf-export.js";
 import { sendPilotWelcome, notifyAdminOfSignup } from "./email.js";
+import { verifyUnsubToken } from "./unsub.js";
 import type { Section } from "../shared/types.js";
 
 dotenv.config({ path: ".env.local", override: true });
@@ -59,44 +62,118 @@ runMigrations().catch(err => console.error("Unexpected migration error:", err));
 
 const app = express();
 const isProd = process.env.NODE_ENV === "production";
-// Force port 3001 for production, otherwise use env or default to 3001
-// Use PORT from environment (Render sets it to 10000), fallback to 3001
 const PORT = parseInt(process.env.PORT || "3001", 10);
-const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-in-prod";
+const APP_URL = (process.env.APP_URL ?? "https://dajo.club").replace(/\/$/, "");
 
-// Debug output after variables are defined
-console.log("🚀 DAJO 3.0 Production Server Starting");
-console.log(`  NODE_ENV: ${process.env.NODE_ENV}`);
-console.log(`  PORT env: ${process.env.PORT}`);
-console.log(`  PORT var: ${PORT}`);
-if (isProd) {
-  console.log("  Environment variables (production):");
-  Object.entries(process.env)
-    .filter(([key]) => key.includes("PORT") || key.includes("RAILWAY") || key.includes("NODE_"))
-    .forEach(([key, val]) => console.log(`    ${key}: ${val?.substring(0, 50)}`));
-}
+// ─── JWT_SECRET hardening ────────────────────────────────────────────────────
+// Kasta direkt om JWT_SECRET saknas i produktion. Tidigare fanns en fallback
+// "dev-secret-change-in-prod" som är offentlig i git-historiken – vilket
+// innebar att en feltypad env-variabel i Render skulle ge omedelbar
+// admin-bypass via forgeade tokens. Bättre att processen inte startar alls.
+const JWT_SECRET = (() => {
+  const s = process.env.JWT_SECRET;
+  if (s && s.length >= 24) return s;
+  if (isProd) {
+    throw new Error(
+      "JWT_SECRET saknas eller är för kort (< 24 tecken). Sätt env-variabeln i Render innan servern startar.",
+    );
+  }
+  console.warn("⚠️  JWT_SECRET saknas — använder dev-fallback. ENDAST för lokal utveckling.");
+  return "dev-secret-change-in-prod-CHANGE-THIS-NOW-" + Math.random().toString(36).slice(2);
+})();
 
-// Verify JWT_SECRET is set for login
-if (isProd && !process.env.JWT_SECRET) {
-  console.warn("⚠️  JWT_SECRET not set - using default dev secret");
-}
-
-// Database diagnostics
+// Kort bootstrap-logg (ingen full env-dump mer).
+console.log(`🚀 DAJO 3.0 Server — NODE_ENV=${process.env.NODE_ENV ?? "?"} PORT=${PORT}`);
 if (isProd) {
   const dbUrl = process.env.DATABASE_URL;
-  console.log(`📊 Database Status:`);
-  console.log(`  - DATABASE_URL set: ${dbUrl ? '✓' : '✗'}`);
-  if (dbUrl) {
-    const masked = dbUrl.replace(/:[^:/@]*@/, ':***@');
-    console.log(`  - Connection string: ${masked}`);
-  }
+  console.log(`📊 DB: ${dbUrl ? "postgres" : "mock"}  APP_URL=${APP_URL}`);
 }
 
-app.use(cors({
-  origin: isProd ? true : "http://localhost:5173",
-  credentials: true,
-}));
-app.use(express.json({ limit: "100mb" })); // Large limit for base64 file uploads
+// ─── CORS ────────────────────────────────────────────────────────────────────
+// I produktion låter vi bara våra egna origins slå igenom. origin:true
+// tillsammans med credentials:true reflekterar Origin-headern tillbaka
+// vilket gör CORS meningslöst.
+const ALLOWED_ORIGINS = new Set(
+  [
+    APP_URL,
+    "https://dajo.club",
+    "https://www.dajo.club",
+    "https://dajo-3.onrender.com",
+    process.env.FRONTEND_ORIGIN,
+  ].filter((o): o is string => !!o),
+);
+
+app.use(
+  cors({
+    origin: isProd
+      ? (origin, cb) => {
+          // Tillåt server-till-server anrop utan Origin (curl, healthchecks).
+          if (!origin) return cb(null, true);
+          cb(null, ALLOWED_ORIGINS.has(origin));
+        }
+      : "http://localhost:5173",
+    credentials: true,
+  }),
+);
+
+// ─── Body-limit ──────────────────────────────────────────────────────────────
+// Default: 100kb. Stora base64-uppladdningar till /api/import/analyze får en
+// egen parser längre ner, så vanliga endpoints inte kan DDoSas med 100MB JSON.
+app.use(express.json({ limit: "100kb" }));
+const bigJson = express.json({ limit: "25mb" });
+
+// ─── Rate limiters ───────────────────────────────────────────────────────────
+// Skydd mot spam/brute-force. Fönstren är korta med små tak – de viktiga är
+// pilot-signup (sänker Simply-reputation om den spammas) och login (klassisk
+// credential stuffing).
+
+const loginLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "För många inloggningsförsök. Försök igen om en stund." },
+});
+
+const signupLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "För många försök. Försök igen om en stund." },
+});
+
+const importLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 50,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Importgräns nådd — försök igen om en timme." },
+});
+
+// ─── Input helpers ───────────────────────────────────────────────────────────
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+function isValidEmail(raw: unknown): raw is string {
+  return typeof raw === "string" && raw.length <= 254 && EMAIL_REGEX.test(raw);
+}
+
+// Mappa snake_case-kolumner från Postgres till camelCase som klienten
+// förväntar sig. Använd på alla song-rader innan vi returnerar dem.
+function rowToSong(row: any): any {
+  if (!row) return row;
+  return {
+    ...row,
+    userId: row.user_id ?? row.userId,
+    timeSignature: row.time_signature ?? row.timeSignature,
+    preferredFormat: row.preferred_format ?? row.preferredFormat ?? "ireal",
+    isPublic: row.is_public ?? row.isPublic ?? false,
+    originalFileData: row.original_file_data ?? row.originalFileData,
+    originalFileType: row.original_file_type ?? row.originalFileType,
+    createdAt: row.created_at ?? row.createdAt,
+    updatedAt: row.updated_at ?? row.updatedAt,
+  };
+}
 
 // ─── Auth middleware ──────────────────────────────────────────────────────────
 
@@ -113,7 +190,7 @@ function requireAuth(req: any, res: any, next: any) {
 
 // ─── Admin allowlist ──────────────────────────────────────────────────────────
 // Comma-separated list of admin e-mail addresses via PILOT_ADMIN_EMAILS.
-// Default to Jonas + David so the admin-vy fungerar direkt under piloten.
+// Default to Jonas + David så admin-vyn fungerar direkt under piloten.
 const ADMIN_EMAILS = new Set(
   (process.env.PILOT_ADMIN_EMAILS ??
     "hello@dajo.club,jonas@combined.se,david@combined.se,jonas.martensson@combined.se"
@@ -127,20 +204,52 @@ function isAdminEmail(email?: string): boolean {
   return !!email && ADMIN_EMAILS.has(email.toLowerCase());
 }
 
-function requireAdmin(req: any, res: any, next: any) {
+// Admin-check som re-verifierar e-posten mot databasen — vi litar INTE bara
+// på JWT-claimen eftersom den skapas av login-flödet. Om någon senare
+// kompromissar /api/auth/login (t.ex. en buggig migrations-fix) ska admin-
+// endpoints ändå vara skyddade.
+async function requireAdmin(req: any, res: any, next: any) {
   const token = req.headers.authorization?.split(" ")[1];
   if (!token) return res.status(401).json({ error: "Inte inloggad" });
+  let user: any;
   try {
-    const user = jwt.verify(token, JWT_SECRET) as any;
-    if (!isAdminEmail(user.email)) {
-      return res.status(403).json({ error: "Endast administratörer har tillgång" });
-    }
-    req.user = user;
-    next();
+    user = jwt.verify(token, JWT_SECRET);
   } catch {
-    res.status(401).json({ error: "Ogiltig session — logga in igen" });
+    return res.status(401).json({ error: "Ogiltig session — logga in igen" });
   }
+
+  // När vi har DB — slå upp användaren på id och verifiera att e-postadressen
+  // i token matchar vad som faktiskt ligger i `users`-tabellen. Då räcker det
+  // inte att forgea en JWT med valfri "email"-claim.
+  if (db) {
+    try {
+      const result = await db.query(
+        "SELECT id, email FROM users WHERE id = $1",
+        [user.id],
+      );
+      const row = result.rows[0];
+      if (!row || row.email?.toLowerCase() !== String(user.email ?? "").toLowerCase()) {
+        return res.status(401).json({ error: "Sessionen är ogiltig — logga in igen" });
+      }
+      if (!isAdminEmail(row.email)) {
+        return res.status(403).json({ error: "Endast administratörer har tillgång" });
+      }
+      req.user = { id: row.id, email: row.email };
+      return next();
+    } catch (err) {
+      console.error("requireAdmin DB lookup failed:", err);
+      return res.status(500).json({ error: "Serverfel" });
+    }
+  }
+
+  // Mock-läge (endast dev): acceptera JWT-claimen.
+  if (!isAdminEmail(user.email)) {
+    return res.status(403).json({ error: "Endast administratörer har tillgång" });
+  }
+  req.user = user;
+  next();
 }
+
 
 // ─── Mock data (used when DATABASE_URL is not set) ───────────────────────────
 
@@ -224,61 +333,91 @@ app.get("/api/health", (_req, res) =>
 
 // ─── Auth: Register ───────────────────────────────────────────────────────────
 
-app.post("/api/auth/register", async (req, res) => {
-  const { email, password, name } = req.body;
-  if (!email || !password) return res.status(400).json({ error: "Email och lösenord krävs" });
-  if (password.length < 6) return res.status(400).json({ error: "Lösenordet måste vara minst 6 tecken" });
+app.post("/api/auth/register", signupLimiter, async (req, res) => {
+  const { email, password, name } = req.body ?? {};
+
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ error: "Giltig e-post krävs" });
+  }
+  if (typeof password !== "string" || password.length < 10) {
+    return res.status(400).json({ error: "Lösenordet måste vara minst 10 tecken" });
+  }
+  if (password.length > 200) {
+    return res.status(400).json({ error: "Lösenordet är för långt" });
+  }
+
+  const cleanEmail = email.toLowerCase().trim();
+  const cleanName = typeof name === "string" ? name.trim().slice(0, 100) : "";
 
   if (!db) {
-    const token = jwt.sign({ id: 1, email }, JWT_SECRET, { expiresIn: "7d" });
-    return res.json({ token, user: { id: 1, email, name: name || "" } });
+    // Mock-läge: ingen persistens, men vi ger ändå en dummy-token så
+    // lokal utveckling funkar utan Postgres.
+    const token = jwt.sign({ id: 1, email: cleanEmail }, JWT_SECRET, { expiresIn: "7d" });
+    return res.json({ token, user: { id: 1, email: cleanEmail, name: cleanName } });
   }
 
   try {
     const hash = await bcrypt.hash(password, 12);
     const result = await db.query(
       "INSERT INTO users (email, name, password_hash) VALUES ($1, $2, $3) RETURNING id, email, name",
-      [email.toLowerCase(), name || "", hash]
+      [cleanEmail, cleanName, hash],
     );
     const user = result.rows[0];
     const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
     res.json({ token, user });
   } catch (err: any) {
     if (err.code === "23505") return res.status(400).json({ error: "E-postadressen används redan" });
+    console.error("register error:", err);
     res.status(500).json({ error: "Serverfel" });
   }
 });
 
 // ─── Auth: Login ──────────────────────────────────────────────────────────────
+// Slår upp användaren i databasen och verifierar lösenordet med bcrypt.
+// Använder samma felmeddelande för "fel e-post" och "fel lösenord" för att
+// inte lämna ut vilka konton som finns (user enumeration).
+app.post("/api/auth/login", loginLimiter, async (req, res) => {
+  const { email, password } = req.body ?? {};
 
-app.post("/api/auth/login", (req, res) => {
+  if (typeof email !== "string" || typeof password !== "string" || !email || !password) {
+    return res.status(400).json({ error: "E-post och lösenord krävs" });
+  }
+
+  const cleanEmail = email.toLowerCase().trim();
+  const generic = { error: "Fel e-post eller lösenord" };
+
+  if (!db) {
+    // Mock-läge: endast tillåtet i dev. I prod smäller JWT_SECRET-checken
+    // tidigt så vi når aldrig hit utan DB, men för säkerhets skull:
+    if (isProd) return res.status(503).json({ error: "Databas saknas i produktion" });
+    const token = jwt.sign({ id: 1, email: cleanEmail }, JWT_SECRET, { expiresIn: "7d" });
+    return res.json({ token, user: { id: 1, email: cleanEmail, name: "Dev User" } });
+  }
+
   try {
-    console.log("📝 Login endpoint called");
-    const { email, password } = req.body || {};
-    console.log(`  Email: ${email}, Password exists: ${!!password}`);
+    const result = await db.query(
+      "SELECT id, email, name, password_hash FROM users WHERE email = $1",
+      [cleanEmail],
+    );
+    const row = result.rows[0];
 
-    if (!email || !password) {
-      return res.status(400).json({ error: "Email och lösenord krävs" });
+    // Konstant-tid-check: kör alltid bcrypt även om användaren inte finns
+    // (fake-hash med samma kostnad) så svarstiden inte avslöjar om kontot
+    // existerar.
+    const FAKE_HASH =
+      "$2a$12$0123456789012345678901uO3dHN0AEoOUkeGnyw9Bu9zFPpNH1V.y";
+    const hashToCheck = row?.password_hash ?? FAKE_HASH;
+    const ok = await bcrypt.compare(password, hashToCheck);
+
+    if (!row || !ok) {
+      return res.status(401).json(generic);
     }
 
-    console.log(`  ✅ Validation passed for ${email}`);
-
-    // Create token
-    console.log(`  Creating JWT token...`);
-    const token = jwt.sign({ id: 1, email }, JWT_SECRET, { expiresIn: "7d" });
-    console.log(`  ✅ Token created: ${token.substring(0, 20)}...`);
-
-    return res.json({
-      token,
-      user: { id: 1, email, name: "Demo User" }
-    });
+    const token = jwt.sign({ id: row.id, email: row.email }, JWT_SECRET, { expiresIn: "7d" });
+    res.json({ token, user: { id: row.id, email: row.email, name: row.name } });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("❌ LOGIN ERROR:", msg);
-    return res.status(500).json({
-      error: "Serverfel",
-      debug: msg
-    });
+    console.error("login error:", err instanceof Error ? err.message : err);
+    res.status(500).json({ error: "Serverfel" });
   }
 });
 
@@ -298,13 +437,13 @@ let mockPilotId = 1;
 // kan läsa den)
 let PILOT_SIGNUPS_OPEN = true;
 
-app.post("/api/pilot/signup", async (req, res) => {
+app.post("/api/pilot/signup", signupLimiter, async (req, res) => {
   if (!PILOT_SIGNUPS_OPEN) {
     return res.status(403).json({ error: "Pilotanmälan är stängd just nu" });
   }
   const { email, name, instrument } = req.body ?? {};
 
-  if (!email || typeof email !== "string" || !email.includes("@")) {
+  if (!isValidEmail(email)) {
     return res.status(400).json({ error: "Giltig e-post krävs" });
   }
   const cleanEmail = email.trim().toLowerCase();
@@ -361,13 +500,18 @@ app.post("/api/pilot/signup", async (req, res) => {
 });
 
 // Publik avanmälan (för List-Unsubscribe-headern i utskick).
-// Funkar både som GET (länk man klickar) och POST (RFC 8058 one-click).
+// Kräver en giltig HMAC-signatur (`?sig=`) som bara vårt eget mejlsystem
+// kan generera. Utan signatur kunde vem som helst skripta DELETE för varje
+// gissad e-post.
 async function handleUnsubscribe(req: any, res: any) {
-  const email = (req.query?.email ?? req.body?.email ?? "").toString().trim().toLowerCase();
+  const rawEmail = (req.query?.email ?? req.body?.email ?? "").toString();
+  const sig = (req.query?.sig ?? req.body?.sig ?? "").toString();
+  const email = rawEmail.trim().toLowerCase();
 
-  // Vi ska aldrig låta endpointen kasta — även tomma anrop ger en vänlig sida.
+  const validSig = email && isValidEmail(email) && verifyUnsubToken(email, sig);
+
   try {
-    if (email && email.includes("@")) {
+    if (validSig) {
       if (db) {
         await db.query("DELETE FROM pilot_signups WHERE email = $1", [email]);
       } else {
@@ -375,10 +519,20 @@ async function handleUnsubscribe(req: any, res: any) {
         if (idx >= 0) MOCK_PILOT_SIGNUPS.splice(idx, 1);
       }
       console.log(`📭 Unsubscribed: ${email}`);
+    } else if (email) {
+      console.warn(`📭 Unsub rejected (invalid sig) for ${email}`);
     }
   } catch (err) {
     console.error("Unsubscribe error:", err);
   }
+
+  // Visa alltid samma vänliga sida — även vid ogiltig signatur — så vi inte
+  // exponerar vilka e-poster som finns i listan (GET ger ingen information
+  // tillbaka till klienten om DELETE gick igenom eller inte).
+  const headline = validSig ? "Du är avanmäld 👋" : "Inga fler mejl 👋";
+  const body = validSig
+    ? "Inga fler mejl från DAJO. Om det var ett misstag kan du anmäla dig igen nedan."
+    : "Klicka på avanmälningslänken i vårt senaste mejl till dig för att stoppa utskick.";
 
   res
     .status(200)
@@ -390,8 +544,8 @@ async function handleUnsubscribe(req: any, res: any) {
 h1{font-family:Georgia,serif;margin:0 0 12px 0;color:#1F2937}
 p{margin:0;color:#6B7280;font-size:14px;line-height:1.6}a{color:#3A6391;text-decoration:none;font-weight:600}</style>
 </head><body><div class="card">
-<h1>Du är avanmäld 👋</h1>
-<p>Inga fler mejl från DAJO. Vi är ledsna att se dig gå — men förstår. Om det var ett misstag, <a href="${APP_URL}">anmäl dig igen här</a>.</p>
+<h1>${headline}</h1>
+<p>${body} <a href="${APP_URL}">dajo.club</a></p>
 </div></body></html>`);
 }
 
@@ -452,15 +606,16 @@ app.post("/api/pilot/status", requireAdmin, (req: any, res) => {
   res.json({ open: PILOT_SIGNUPS_OPEN });
 });
 
-// ─── Debug: Version ───────────────────────────────────────────────────────────
-
-app.get("/api/debug/version", (req, res) => {
+// ─── Debug: Version (admin-skyddad) ──────────────────────────────────────────
+// Tidigare exponerades commit-hash + uptime + nodeEnv öppet. Låg risk, men
+// ingen anledning att publicera recon-info till internet.
+app.get("/api/debug/version", requireAdmin, (_req, res) => {
   res.json({
     version: "02cdef8",
     timestamp: new Date().toISOString(),
     nodeEnv: process.env.NODE_ENV,
     port: PORT,
-    uptime: Math.floor(process.uptime())
+    uptime: Math.floor(process.uptime()),
   });
 });
 
@@ -488,7 +643,7 @@ app.get("/api/songs", requireAuth, async (req: any, res) => {
        FROM songs WHERE user_id = $1 ORDER BY updated_at DESC`,
       [req.user.id]
     );
-    res.json(result.rows);
+    res.json(result.rows.map(rowToSong));
   } catch {
     res.status(500).json({ error: "Kunde inte hämta låtar" });
   }
@@ -523,7 +678,7 @@ app.post("/api/songs", requireAuth, async (req: any, res) => {
       [req.user.id, title, artist, key, tempo, timeSignature, style,
        JSON.stringify(sections), notes, preferredFormat]
     );
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(rowToSong(result.rows[0]));
   } catch {
     res.status(500).json({ error: "Kunde inte skapa låt" });
   }
@@ -544,12 +699,7 @@ app.get("/api/songs/:id", requireAuth, async (req: any, res) => {
     );
     const song = result.rows[0];
     if (!song) return res.status(404).json({ error: "Låt hittades inte" });
-    // Map snake_case DB columns to camelCase for frontend
-    if (song.original_file_data) {
-      song.originalFileData = song.original_file_data;
-      song.originalFileType = song.original_file_type;
-    }
-    res.json(song);
+    res.json(rowToSong(song));
   } catch {
     res.status(500).json({ error: "Serverfel" });
   }
@@ -582,7 +732,7 @@ app.put("/api/songs/:id", requireAuth, async (req: any, res) => {
     );
     const song = result.rows[0];
     if (!song) return res.status(404).json({ error: "Låt hittades inte" });
-    res.json(song);
+    res.json(rowToSong(song));
   } catch {
     res.status(500).json({ error: "Serverfel" });
   }
@@ -618,7 +768,7 @@ app.put("/api/songs/:id/transpose", requireAuth, async (req: any, res) => {
       "UPDATE songs SET sections=$1, key=$2 WHERE id=$3 AND user_id=$4 RETURNING *",
       [JSON.stringify(newSections), newKey, id, req.user.id]
     );
-    res.json(updated.rows[0]);
+    res.json(rowToSong(updated.rows[0]));
   } catch {
     res.status(500).json({ error: "Serverfel" });
   }
@@ -875,7 +1025,7 @@ app.get("/api/songs/public/:id", async (req, res) => {
   try {
     const result = await db.query("SELECT * FROM songs WHERE id=$1 AND is_public=true", [id]);
     if (!result.rows[0]) return res.status(404).json({ error: "Låten hittades inte eller är inte offentlig" });
-    res.json(result.rows[0]);
+    res.json(rowToSong(result.rows[0]));
   } catch {
     res.status(500).json({ error: "Serverfel" });
   }
@@ -1017,7 +1167,7 @@ app.get("/api/setlists/:id/export", requireAuth, async (req: any, res) => {
       [songIds]
     );
 
-    const songMap = new Map(songsResult.rows.map(s => [s.id, s]));
+    const songMap = new Map(songsResult.rows.map((s: any) => [s.id, s]));
     const songs = songIds
       .map((songId: number) => songMap.get(songId))
       .filter(Boolean)
@@ -1054,7 +1204,7 @@ app.get("/api/setlists/:id/export", requireAuth, async (req: any, res) => {
 
 // ─── AI Import: Analyze file (PDF or image) ──────────────────────────────────
 
-app.post("/api/import/analyze", requireAuth, async (req: any, res) => {
+app.post("/api/import/analyze", importLimiter, requireAuth, bigJson, async (req: any, res) => {
   const { base64, mediaType, filename, transcribeLyrics } = req.body;
 
   if (!base64 || !mediaType || !filename) {
@@ -1094,7 +1244,7 @@ app.post("/api/import/analyze", requireAuth, async (req: any, res) => {
 
 // ─── AI Import: Save analyzed songs to DB ────────────────────────────────────
 
-app.post("/api/import/save", requireAuth, async (req: any, res) => {
+app.post("/api/import/save", requireAuth, bigJson, async (req: any, res) => {
   const { songs } = req.body;
   if (!Array.isArray(songs) || songs.length === 0) {
     return res.status(400).json({ error: "Inga låtar att spara" });
@@ -1146,8 +1296,10 @@ const MOCK_SHARES: { token: string; resourceType: "song" | "setlist"; resourceId
 let mockGroupId = 1;
 let mockInvId = 1;
 
-function randomToken(): string {
-  return Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+// Kryptosäker token-generator — tidigare Math.random() kunde predikteras
+// efter ett par observationer (V8:s PRNG är ingen CSPRNG).
+function randomToken(bytes = 24): string {
+  return crypto.randomBytes(bytes).toString("base64url");
 }
 
 // ─── Groups: list (where I'm member) ─────────────────────────────────────────

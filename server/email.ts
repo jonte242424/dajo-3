@@ -12,10 +12,12 @@
 
 import { Resend } from "resend";
 import nodemailer, { type Transporter } from "nodemailer";
+import crypto from "crypto";
+import { unsubToken } from "./unsub.js";
 
 const FROM = process.env.EMAIL_FROM ?? "DAJO <hello@dajo.club>";
 const REPLY_TO = process.env.EMAIL_REPLY_TO ?? "hello@dajo.club";
-const APP_URL = process.env.APP_URL ?? "https://dajo.club";
+const APP_URL = (process.env.APP_URL ?? "https://dajo.club").replace(/\/$/, "");
 
 /* ─── Backend-val ────────────────────────────────────────────────────────── */
 
@@ -57,18 +59,21 @@ interface SendArgs {
 }
 
 // Kategori-styrd unsubscribe: vi har ett brev åt gången just nu, men lämnar
-// öppet för fler mallar sen.
+// öppet för fler mallar sen. URL:en signeras med HMAC så endast mottagaren
+// av mejlet (som fick tokenen via List-Unsubscribe) kan avanmäla adressen.
 function unsubscribeMailto(): string {
   return `mailto:${REPLY_TO}?subject=unsubscribe`;
 }
 function unsubscribeUrl(to: string): string {
-  return `${APP_URL}/api/pilot/unsubscribe?email=${encodeURIComponent(to)}`;
+  const sig = unsubToken(to);
+  return `${APP_URL}/api/pilot/unsubscribe?email=${encodeURIComponent(to)}&sig=${sig}`;
 }
 
 function generateMessageId(): string {
-  const rand = Math.random().toString(36).slice(2, 10);
+  // crypto.randomBytes är kryptosäker — tidigare Math.random gjorde ID:t
+  // gissningsbart, vilket inte är en säkerhetshole men sämre unikhet.
+  const rand = crypto.randomBytes(6).toString("base64url");
   const ts = Date.now().toString(36);
-  // Domän från EMAIL_FROM för att matcha DKIM-signering
   const domain = (FROM.match(/@([^>\s]+)/)?.[1] ?? "dajo.club").replace(/>/g, "");
   return `<${ts}.${rand}@${domain}>`;
 }
