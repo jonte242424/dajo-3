@@ -644,6 +644,125 @@ app.get("/api/debug/version", requireAdmin, (_req, res) => {
   });
 });
 
+// ─── Feedback (admin annotate & review) ──────────────────────────────────────
+// In-app feedback widget: admins klickar på element i prod-appen och lämnar
+// kommentarer. Endast admins får skriva/läsa — vanliga användare ser aldrig
+// widget:en (frontend dessutom gatad på isAdmin). Gränserna är avsiktligt
+// strama (selector max 500, comment max 4000) så vi inte får XXL-payloads.
+
+app.post("/api/feedback", requireAdmin, async (req: any, res) => {
+  const { url, selector, elementText, comment, priority } = req.body ?? {};
+  if (!comment || typeof comment !== "string" || comment.trim().length === 0) {
+    return res.status(400).json({ error: "Kommentar krävs" });
+  }
+  if (!url || typeof url !== "string") {
+    return res.status(400).json({ error: "URL krävs" });
+  }
+  if (comment.length > 4000 || url.length > 1000 || (selector && selector.length > 500)) {
+    return res.status(413).json({ error: "Fältet för stort" });
+  }
+  const prio = ["low", "normal", "high"].includes(priority) ? priority : "normal";
+
+  if (!db) return res.status(503).json({ error: "Databas ej tillgänglig" });
+  try {
+    const result = await db.query(
+      `INSERT INTO feedback_items (user_id, url, selector, element_text, comment, priority)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [req.user.id, url, selector ?? null, elementText ?? null, comment.trim(), prio],
+    );
+    res.status(201).json({ item: result.rows[0] });
+  } catch (err) {
+    console.error("feedback insert failed:", err);
+    res.status(500).json({ error: "Kunde inte spara feedback" });
+  }
+});
+
+app.get("/api/feedback", requireAdmin, async (req: any, res) => {
+  if (!db) return res.json({ items: [] });
+  const status = typeof req.query.status === "string" ? req.query.status : null;
+  try {
+    const result = status
+      ? await db.query(
+          `SELECT f.*, u.email AS user_email
+           FROM feedback_items f
+           LEFT JOIN users u ON u.id = f.user_id
+           WHERE f.status = $1
+           ORDER BY f.created_at DESC
+           LIMIT 500`,
+          [status],
+        )
+      : await db.query(
+          `SELECT f.*, u.email AS user_email
+           FROM feedback_items f
+           LEFT JOIN users u ON u.id = f.user_id
+           ORDER BY f.created_at DESC
+           LIMIT 500`,
+        );
+    res.json({ items: result.rows });
+  } catch (err) {
+    console.error("feedback list failed:", err);
+    res.status(500).json({ error: "Kunde inte hämta feedback" });
+  }
+});
+
+app.patch("/api/feedback/:id", requireAdmin, async (req: any, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: "Ogiltigt id" });
+  const { status, priority, comment } = req.body ?? {};
+  const fields: string[] = [];
+  const values: any[] = [];
+  let i = 1;
+  if (status !== undefined) {
+    if (!["open", "in_progress", "done", "wontfix"].includes(status)) {
+      return res.status(400).json({ error: "Ogiltig status" });
+    }
+    fields.push(`status = $${i++}`); values.push(status);
+  }
+  if (priority !== undefined) {
+    if (!["low", "normal", "high"].includes(priority)) {
+      return res.status(400).json({ error: "Ogiltig prioritet" });
+    }
+    fields.push(`priority = $${i++}`); values.push(priority);
+  }
+  if (comment !== undefined) {
+    if (typeof comment !== "string" || comment.length > 4000) {
+      return res.status(400).json({ error: "Ogiltig kommentar" });
+    }
+    fields.push(`comment = $${i++}`); values.push(comment);
+  }
+  if (fields.length === 0) return res.status(400).json({ error: "Inget att uppdatera" });
+  fields.push(`updated_at = NOW()`);
+  values.push(id);
+
+  if (!db) return res.status(503).json({ error: "Databas ej tillgänglig" });
+  try {
+    const result = await db.query(
+      `UPDATE feedback_items SET ${fields.join(", ")} WHERE id = $${i} RETURNING *`,
+      values,
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: "Hittades inte" });
+    res.json({ item: result.rows[0] });
+  } catch (err) {
+    console.error("feedback update failed:", err);
+    res.status(500).json({ error: "Kunde inte uppdatera" });
+  }
+});
+
+app.delete("/api/feedback/:id", requireAdmin, async (req: any, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: "Ogiltigt id" });
+  if (!db) return res.status(503).json({ error: "Databas ej tillgänglig" });
+  try {
+    const result = await db.query("DELETE FROM feedback_items WHERE id = $1", [id]);
+    if (result.rowCount === 0) return res.status(404).json({ error: "Hittades inte" });
+    res.status(204).end();
+  } catch (err) {
+    console.error("feedback delete failed:", err);
+    res.status(500).json({ error: "Kunde inte radera" });
+  }
+});
+
 // ─── Auth: Me ─────────────────────────────────────────────────────────────────
 
 app.get("/api/auth/me", requireAuth, (req: any, res) => {

@@ -99,6 +99,23 @@ CREATE TABLE IF NOT EXISTS training_submissions (
   created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Feedback items: in-app "annotate & review" som admins använder för att
+-- markera vad som behöver fixas när de testkör i prod.
+CREATE TABLE IF NOT EXISTS feedback_items (
+  id            SERIAL PRIMARY KEY,
+  user_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  url           TEXT NOT NULL,
+  selector      TEXT,
+  element_text  TEXT,
+  comment       TEXT NOT NULL,
+  status        TEXT DEFAULT 'open',   -- open | in_progress | done | wontfix
+  priority      TEXT DEFAULT 'normal', -- low | normal | high
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback_items(status);
+CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback_items(created_at DESC);
+
 -- Pilot signups (landing-page interest list)
 CREATE TABLE IF NOT EXISTS pilot_signups (
   id          SERIAL PRIMARY KEY,
