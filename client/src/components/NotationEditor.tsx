@@ -8,6 +8,7 @@ import type {
   ChordEntry,
   TimeSignature,
 } from "../../../shared/types";
+import ChordAutocomplete from "./ChordAutocomplete";
 
 interface NotationEditorProps {
   sections: Section[];
@@ -194,16 +195,8 @@ export default function NotationEditor({
                             {chord.symbol}
                           </div>
                         ))}
-                        <input
-                          type="text"
-                          placeholder="Type chord and press Enter..."
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && (e.target as HTMLInputElement).value) {
-                              addChord(sectionIdx, barIdx, (e.target as HTMLInputElement).value);
-                              (e.target as HTMLInputElement).value = "";
-                            }
-                          }}
-                          className="px-2 py-1 text-sm border rounded"
+                        <PendingChordInput
+                          onAdd={(symbol) => addChord(sectionIdx, barIdx, symbol)}
                         />
                       </div>
                     </div>
@@ -361,5 +354,26 @@ export default function NotationEditor({
         ))
       )}
     </div>
+  );
+}
+
+// Liten input som håller sitt eget "pending"-värde och commit:ar till
+// addChord() när användaren trycker Enter eller väljer ett förslag. Gjord
+// inline här för att inte väva in chord-symbol-state i huvudkomponenten.
+function PendingChordInput({ onAdd }: { onAdd: (symbol: string) => void }) {
+  const [value, setValue] = useState("");
+  return (
+    <ChordAutocomplete
+      value={value}
+      onChange={setValue}
+      placeholder="Skriv ackord + Enter"
+      className="px-2 py-1 text-sm border rounded font-mono focus:outline-none focus:ring-2 focus:ring-amber-400 w-32"
+      onCommit={(v) => {
+        const trimmed = v.trim();
+        if (!trimmed) return;
+        onAdd(trimmed);
+        setValue("");
+      }}
+    />
   );
 }

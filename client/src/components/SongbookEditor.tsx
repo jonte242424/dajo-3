@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Plus, Trash2, ChevronDown } from "lucide-react";
 import type { Section, Bar, ChordEntry } from "../../../shared/types";
+import ChordAutocomplete from "./ChordAutocomplete";
 
 interface SongbookEditorProps {
   sections: Section[];
@@ -157,14 +158,11 @@ export default function SongbookEditor({ sections, onChange }: SongbookEditorPro
                           <>
                             {bar.chords.map((chord, chordIdx) => (
                               <div key={chordIdx} className="flex items-center gap-1">
-                                <input
-                                  type="text"
+                                <ChordAutocomplete
                                   value={chord.symbol}
-                                  onChange={(e) =>
-                                    updateChord(sectionIdx, barIdx, chordIdx, e.target.value)
-                                  }
+                                  onChange={(v) => updateChord(sectionIdx, barIdx, chordIdx, v)}
                                   placeholder="Am7"
-                                  className="px-2 py-1 text-sm bg-white border rounded font-mono font-bold"
+                                  className="px-2 py-1 text-sm bg-white border rounded font-mono font-bold w-24 focus:outline-none focus:ring-2 focus:ring-amber-400"
                                 />
                                 <button
                                   onClick={() => removeChord(sectionIdx, barIdx, chordIdx)}

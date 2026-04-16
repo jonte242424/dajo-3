@@ -3,7 +3,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
   ListMusic, Plus, Trash2, ChevronRight, GripVertical,
-  ArrowLeft, Save, X, Music, Download,
+  ArrowLeft, Save, X, Music, Download, ChevronDown,
+  Grid3x3, BookOpen, Music2,
 } from "lucide-react";
 import { Logo } from "../components/Logo";
 import {
@@ -41,6 +42,73 @@ interface SetlistSong {
   key?: string;
   tempo?: number;
   position: number;
+}
+
+// ─── Export dropdown menu ─────────────────────────────────────────────────────
+// Liten meny som låter användaren välja mellan iReal / Songbook / Notation-PDF
+// när hen exporterar en spellista. Stänger sig vid klick utanför och vid val.
+
+function ExportMenu({
+  onExport,
+}: {
+  onExport: (style: "ireal" | "songbook" | "notation") => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  const pick = (style: "ireal" | "songbook" | "notation") => {
+    setOpen(false);
+    onExport(style);
+  };
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        className="flex items-center gap-1.5 px-4 py-2 bg-white border border-cream2 text-ink-soft rounded-xl text-sm font-semibold hover:bg-cream hover:text-ink transition-colors shadow-soft"
+        title="Exportera som PDF"
+      >
+        <Download size={15} />
+        <span className="hidden sm:inline">Exportera</span>
+        <ChevronDown size={14} className={`transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-40 bg-white border border-cream2 rounded-2xl shadow-lift min-w-[200px] overflow-hidden">
+          <button
+            onMouseDown={(e) => { e.preventDefault(); pick("ireal"); }}
+            className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm hover:bg-amber-50 transition-colors"
+          >
+            <Grid3x3 size={16} className="text-amber-600 flex-shrink-0" />
+            <div>
+              <p className="font-semibold text-ink">iReal</p>
+              <p className="text-xs text-ink-faint">Rutnät med ackord</p>
+            </div>
+          </button>
+          <button
+            onMouseDown={(e) => { e.preventDefault(); pick("songbook"); }}
+            className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm hover:bg-amber-50 transition-colors border-t border-cream2"
+          >
+            <BookOpen size={16} className="text-amber-600 flex-shrink-0" />
+            <div>
+              <p className="font-semibold text-ink">Sångbok</p>
+              <p className="text-xs text-ink-faint">Text + ackord</p>
+            </div>
+          </button>
+          <button
+            onMouseDown={(e) => { e.preventDefault(); pick("notation"); }}
+            className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm hover:bg-amber-50 transition-colors border-t border-cream2"
+          >
+            <Music2 size={16} className="text-amber-600 flex-shrink-0" />
+            <div>
+              <p className="font-semibold text-ink">Notation</p>
+              <p className="text-xs text-ink-faint">Notskrift</p>
+            </div>
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ─── Sortable song row ────────────────────────────────────────────────────────
@@ -204,13 +272,7 @@ function SetlistDetail({ id, onBack }: { id: number; onBack: () => void }) {
         </div>
         <div className="flex gap-2">
           {songs.length > 0 && (
-            <button
-              onClick={() => handleSetlistExport("ireal")}
-              className="flex items-center gap-1.5 px-3 py-2 border border-cream2 bg-white text-ink-soft rounded-xl text-sm font-medium hover:bg-cream2 hover:text-ink transition-colors"
-              title="Exportera spellista som PDF (iReal-stil)"
-            >
-              <Download size={15} /> Exportera
-            </button>
+            <ExportMenu onExport={handleSetlistExport} />
           )}
           <button
             onClick={() => setShowAddSong(true)}
