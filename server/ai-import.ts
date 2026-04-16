@@ -70,6 +70,22 @@ export function normalizeMusicFonts(text: string): string {
 
 const FLASK_API_URL = process.env.FLASK_API_URL || "http://localhost:5002";
 
+// Talar om för klienten om ljudimport är reellt tillgängligt. I produktion
+// på Render kör vi bara Node-backenden — Flask-tjänsten (ChordMiniApp)
+// ligger lokalt på dev-maskinen. Då ska vi inte visa ljudknappen för
+// användaren utan att ha något fungerande att göra med uppladdningen.
+export function isAudioImportAvailable(): boolean {
+  // Om AUDIO_IMPORT_ENABLED är uttryckligen satt till "true" litar vi på
+  // den (öppen dörr om man kör Flask på samma host). Annars kräver vi en
+  // FLASK_API_URL som pekar på något annat än localhost.
+  if (process.env.AUDIO_IMPORT_ENABLED === "true") return true;
+  if (process.env.AUDIO_IMPORT_ENABLED === "false") return false;
+  const url = process.env.FLASK_API_URL;
+  if (!url) return false;
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)/i.test(url)) return false;
+  return true;
+}
+
 interface ChordSegment {
   chord: string;
   start_time: number;

@@ -4,7 +4,7 @@
  * Uses Claude Vision to detect chords, sections, and song structure
  */
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
@@ -38,13 +38,16 @@ interface Props {
   onClose: () => void;
 }
 
-const ACCEPTED = [
+// Formaten delas upp så vi kan stänga av audio-knappen i prod tills Flask-
+// backenden faktiskt är deployad (se /api/import/capabilities).
+const ACCEPTED_CORE = [
   "application/pdf",
   "image/jpeg", "image/png", "image/webp", "image/gif",
-  "audio/mpeg", "audio/wav", "audio/ogg", "audio/mp4",
   "text/plain", "text/x-chordpro", "application/x-chordpro",
 ];
-const ACCEPTED_EXT = ".pdf,.jpg,.jpeg,.png,.webp,.gif,.mp3,.wav,.ogg,.m4a,.pro,.cho,.chopro";
+const ACCEPTED_AUDIO = ["audio/mpeg", "audio/wav", "audio/ogg", "audio/mp4"];
+const ACCEPTED_EXT_CORE = ".pdf,.jpg,.jpeg,.png,.webp,.gif,.pro,.cho,.chopro";
+const ACCEPTED_EXT_AUDIO = ",.mp3,.wav,.ogg,.m4a";
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -84,6 +87,19 @@ export default function ImportDialog({ onClose }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
+  const [audioEnabled, setAudioEnabled] = useState(false);
+
+  // Fråga servern om ljudimport är reellt tillgängligt (Flask-tjänsten
+  // behöver vara uppe). Tyst fail = audio blir dolt, vilket är rätt default.
+  useEffect(() => {
+    fetch("/api/import/capabilities")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => setAudioEnabled(Boolean(j?.audio)))
+      .catch(() => setAudioEnabled(false));
+  }, []);
+
+  const ACCEPTED = audioEnabled ? [...ACCEPTED_CORE, ...ACCEPTED_AUDIO] : ACCEPTED_CORE;
+  const ACCEPTED_EXT = audioEnabled ? ACCEPTED_EXT_CORE + ACCEPTED_EXT_AUDIO : ACCEPTED_EXT_CORE;
 
   const runAnalysis = useCallback(async (
     f: File,

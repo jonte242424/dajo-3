@@ -349,6 +349,15 @@ function SectionBlock({
     );
   }
 
+  // Chunka takterna till rader om 4 (desktop) — behåller ursprungsindex så
+  // updateBar(idx, b) pekar på rätt plats i sections-arrayen.
+  const rows: Array<Array<{ bar: Bar; idx: number }>> = [];
+  for (let i = 0; i < section.bars.length; i += 4) {
+    rows.push(
+      section.bars.slice(i, i + 4).map((bar: Bar, j: number) => ({ bar, idx: i + j }))
+    );
+  }
+
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mb-4">
       {/* Section header */}
@@ -465,6 +474,7 @@ export default function Editor() {
   const [showExport, setShowExport] = useState(false);
   const [isPublic, setIsPublic] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
+  const [showShareDialog, setShowShareDialog] = useState(false);
   const [keyInfo, setKeyInfo] = useState<any>(null);
   const [semitones, setSemitones] = useState(0);
   const [showOriginal, setShowOriginal] = useState(false);
@@ -508,23 +518,47 @@ export default function Editor() {
     }
   }, [song]);
 
-  async function toggleShare() {
-    const newPublic = !isPublic;
-    setIsPublic(newPublic);
+  // Dela-flödet:
+  //   • Privat låt  → PUT /share {isPublic:true}, öppna dialog, auto-kopiera URL.
+  //   • Publik låt  → öppna dialog direkt (ingen toggle) så användaren kan
+  //                    se/kopiera länken igen eller avsluta delningen där.
+  // Vi ville inte stänga delning av misstag bara för att någon råkade klicka
+  // en andra gång på knappen.
+  async function openShare() {
+    if (isPublic) {
+      setShowShareDialog(true);
+      return;
+    }
     try {
       await apiFetch(`/api/songs/${id}/share`, {
         method: "PUT",
-        body: JSON.stringify({ isPublic: newPublic }),
+        body: JSON.stringify({ isPublic: true }),
       });
-      if (newPublic) {
-        const url = `${window.location.origin}/share/${id}`;
-        navigator.clipboard.writeText(url);
-        setShareCopied(true);
-        setTimeout(() => setShareCopied(false), 3000);
-      }
+      setIsPublic(true);
+      setShowShareDialog(true);
+      try { await navigator.clipboard.writeText(`${window.location.origin}/share/${id}`); } catch {}
     } catch {
-      setIsPublic(!newPublic); // återställ vid fel
+      // UI blir kvar som "privat" om servern sa nej.
     }
+  }
+
+  async function copyShareUrl() {
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/share/${id}`);
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2000);
+    } catch {}
+  }
+
+  async function stopSharing() {
+    try {
+      await apiFetch(`/api/songs/${id}/share`, {
+        method: "PUT",
+        body: JSON.stringify({ isPublic: false }),
+      });
+      setIsPublic(false);
+      setShowShareDialog(false);
+    } catch {}
   }
 
   // Load key info when key changes
@@ -713,8 +747,8 @@ export default function Editor() {
             </button>
           )}
           <button
-            onClick={toggleShare}
-            title={isPublic ? "Offentlig — klicka för att stänga delning" : "Dela låten"}
+            onClick={openShare}
+            title={isPublic ? "Offentlig — klicka för delningslänk" : "Dela låten"}
             className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 border text-sm rounded-xl transition-colors ${
               isPublic
                 ? "border-emerald-400 text-emerald-700 bg-emerald-50 hover:bg-emerald-100"
@@ -1026,6 +1060,68 @@ export default function Editor() {
           songTitle={title}
           onClose={() => setShowExport(false)}
         />
+      )}
+
+      {showShareDialog && id && (
+        <div
+          className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => setShowShareDialog(false)}
+        >
+          <div
+            className="bg-white rounded-2xl border border-cream2 shadow-xl max-w-md w-full p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Share2 size={18} className="text-emerald-600" />
+                <h2 className="text-lg font-bold text-ink">Delningslänk</h2>
+              </div>
+              <button
+                onClick={() => setShowShareDialog(false)}
+                className="p-1 text-ink-soft hover:text-ink transition-colors"
+                aria-label="Stäng"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <p className="text-sm text-ink-soft mb-3">
+              Alla med länken kan läsa låten — inget inlogg behövs. Det går
+              inte att redigera via delningslänken.
+            </p>
+            <div className="flex items-center gap-2 p-2 bg-cream rounded-xl border border-cream2 mb-4">
+              <input
+                readOnly
+                value={`${window.location.origin}/share/${id}`}
+                className="flex-1 bg-transparent text-sm text-ink font-mono px-2 py-1 focus:outline-none truncate"
+                onFocus={(e) => e.currentTarget.select()}
+              />
+              <button
+                onClick={copyShareUrl}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-steel-600 text-white text-sm font-semibold
+                           rounded-xl hover:bg-steel-700 transition-colors shrink-0"
+              >
+                {shareCopied ? <Check size={14} /> : <Share2 size={14} />}
+                {shareCopied ? "Kopierad!" : "Kopiera"}
+              </button>
+            </div>
+            <div className="flex items-center justify-between">
+              <button
+                onClick={stopSharing}
+                className="text-sm text-rose-600 hover:text-rose-700 hover:underline transition-colors"
+              >
+                Stäng delning
+              </button>
+              <a
+                href={`/share/${id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-steel-600 hover:text-steel-700 hover:underline transition-colors"
+              >
+                Öppna i ny flik →
+              </a>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

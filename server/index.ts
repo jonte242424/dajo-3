@@ -9,7 +9,7 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import rateLimit from "express-rate-limit";
 import { db } from "./db.js";
-import { analyzeFile, type MediaType } from "./ai-import.js";
+import { analyzeFile, isAudioImportAvailable, type MediaType } from "./ai-import.js";
 import { generatePdf, generateSetlistPdf, type ExportStyle } from "./pdf-export.js";
 import { sendPilotWelcome, notifyAdminOfSignup } from "./email.js";
 import { verifyUnsubToken } from "./unsub.js";
@@ -1203,6 +1203,18 @@ app.get("/api/setlists/:id/export", requireAuth, async (req: any, res) => {
 });
 
 // ─── AI Import: Analyze file (PDF or image) ──────────────────────────────────
+
+// Frontend frågar den här innan den visar ljuduppladdning — undviker att en
+// användare laddar upp 50 MB mp3 och får en tom låt tillbaka när Flask-
+// backenden inte är deployad.
+app.get("/api/import/capabilities", (_req, res) => {
+  res.json({
+    audio: isAudioImportAvailable(),
+    pdf: true,
+    image: true,
+    chordpro: true,
+  });
+});
 
 app.post("/api/import/analyze", importLimiter, requireAuth, bigJson, async (req: any, res) => {
   const { base64, mediaType, filename, transcribeLyrics } = req.body;
