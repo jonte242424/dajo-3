@@ -647,13 +647,28 @@ app.get("/api/debug/version", requireAdmin, (_req, res) => {
   });
 });
 
-// TILLFÄLLIGT (tas bort efter verifiering 2026-04-16): publik diagnostik för
-// att bekräfta om PILOT_ADMIN_EMAILS är effektiv i runtime-processen. Returnerar
-// INGA e-postadresser — bara ett antal + ett boolean. Ingen recon-risk.
-app.get("/api/debug/admin-setup", (_req, res) => {
+// TILLFÄLLIGT (tas bort efter verifiering): publik diagnostik för att bekräfta
+// att PILOT_ADMIN_EMAILS är effektiv i runtime-processen. Accepterar optionell
+// ?email=X för att svara om exakt den adressen skulle räknas som admin.
+app.get("/api/debug/admin-setup", (req, res) => {
+  const testEmail = typeof req.query.email === "string" ? req.query.email : null;
   res.json({
     hasEnvVar: !!process.env.PILOT_ADMIN_EMAILS,
     envVarLength: (process.env.PILOT_ADMIN_EMAILS ?? "").length,
+    adminCount: ADMIN_EMAILS.size,
+    testEmail,
+    isAdminForTest: testEmail ? isAdminEmail(testEmail) : null,
+  });
+});
+
+// TILLFÄLLIGT: requireAuth-skyddad endpoint som returnerar exakt vad servern
+// ser i din JWT. Hjälper diagnostisera "isAdmin: false trots att env är rätt".
+app.get("/api/debug/whoami", requireAuth, (req: any, res) => {
+  const email = req.user?.email;
+  res.json({
+    jwtEmail: email,
+    jwtEmailLength: typeof email === "string" ? email.length : 0,
+    isAdmin: isAdminEmail(email),
     adminCount: ADMIN_EMAILS.size,
   });
 });
