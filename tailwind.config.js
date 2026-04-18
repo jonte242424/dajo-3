@@ -43,10 +43,52 @@ export default {
         sage:      "#95B8B3",
         pistachio: "#B8D091",
         peach:     "#FFC09C",
-        rose:      "#E4BCCA",
+        // Rose: DEFAULT bevarar den gamla singelfärgen så bg-rose/bg-rose/20
+        // fortfarande funkar överallt, PLUS en full skala så bg-rose-600
+        // osv genereras för feedback-widget + status-pills.
+        rose: {
+          DEFAULT: "#E4BCCA",
+          50:  "#FEF2F2",
+          100: "#FEE2E2",
+          200: "#FECACA",
+          300: "#FCA5A5",
+          400: "#F87171",
+          500: "#EF4444",
+          600: "#DC2626",
+          700: "#B91C1C",
+          800: "#991B1B",
+          900: "#7F1D1D",
+        },
         lavender:  "#B49DC1",
         butter:    "#EBE8A4",
         gold:      "#D9A741",
+
+        // Status-skalor: emerald för "Klar", gray för "Skippas". Nya skalor,
+        // ingen befintlig kod använder dem så inget kan brytas.
+        emerald: {
+          50:  "#ECFDF5",
+          100: "#D1FAE5",
+          200: "#A7F3D0",
+          300: "#6EE7B7",
+          400: "#34D399",
+          500: "#10B981",
+          600: "#059669",
+          700: "#047857",
+          800: "#065F46",
+          900: "#064E3B",
+        },
+        gray: {
+          50:  "#F9FAFB",
+          100: "#F3F4F6",
+          200: "#E5E7EB",
+          300: "#D1D5DB",
+          400: "#9CA3AF",
+          500: "#6B7280",
+          600: "#4B5563",
+          700: "#374151",
+          800: "#1F2937",
+          900: "#111827",
+        },
       },
       fontFamily: {
         sans: ['ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'sans-serif'],
